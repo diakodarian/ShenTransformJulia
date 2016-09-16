@@ -465,7 +465,7 @@ function ifstB(fk, fj, quad, axis)
     return fj
 end
 
-function fst(fj, fk, quad, axis)
+function fstB(fj, fk, quad, axis)
     """Fast Shen transform .
     """
     fk = fastShenScalar(fj, fk, quad, axis)
