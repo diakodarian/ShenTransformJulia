@@ -79,6 +79,20 @@ function chebyshevRobinPolynomials(BC, N, x)
     end
     return phi
 end
+function chebyshevBiharmonicPolynomials(N, x)
+    l = length(x)
+    phi = zeros(l, N)
+    k = Biharmonicwavenumbers(N)
+    factor1 = -2*(k+2)./(k+3)
+    factor2 = (k+1)./(k+3)
+    Tk = chebyshevPolynomials(N, x)
+    for i in 1:N-4
+        for j in 1:l
+            phi[j,i] = Tk[j,i] + factor1[i]*Tk[j,i+2]+ factor2[i]*Tk[j,i+4]
+        end
+    end
+    return phi
+end
 function wavenumbers{T<:Int}(N::T)
     return collect(0:N-3)
 end
@@ -202,9 +216,9 @@ function TDMA_1D(a, b, c, d)
 end
 #----------------------ooo----------------------------
 #-----------------------------------------------------
-#                PDMA_1D
+#                Symmetrical PDMA_1D
 #-----------------------------------------------------
-function PDMA_1D(d, e, f, b)
+function SymmetricalPDMA_1D(d, e, f, b)
     n = length(d)
     for k in 1:(n-2)
         lam = e[k]/d[k]
@@ -227,6 +241,126 @@ function PDMA_1D(d, e, f, b)
     b[end-1] = b[end-1]/d[end-1] - e[n-1]*b[end]
     for k in n-2:-1:1
         b[k] = b[k]/d[k] - e[k]*b[k+1] - f[k]*b[k+2]
+    end
+    return b
+end
+#----------------------ooo----------------------------
+#-----------------------------------------------------
+#                Non-symmertrical PDMA
+#-----------------------------------------------------
+function PDMA_1D(e,a,d,c,f,b)
+    N = length(d)
+    for i in 2:N-1
+        xmult = a[i-1]/d[i-1]
+        d[i] = d[i] - xmult*c[i-1]
+        c[i] = c[i] - xmult*f[i-1]
+        b[i] = b[i] - xmult*b[i-1]
+        xmult = e[i-1]/d[i-1]
+        a[i]   = a[i] - xmult*c[i-1]
+        d[i+1] = d[i+1] - xmult*f[i-1]
+        b[i+1] = b[i+1] - xmult*b[i-1]
+    end
+    xmult = a[N-1]/d[N-1]
+    d[N] = d[N] - xmult*c[N-1]
+    b[N] = (b[N] - xmult*b[N-1])/d[N]
+    b[N-1] = (b[N-1] - c[N-1]*b[N])/d[N-1]
+    for i in N-2:-1:1
+        b[i] = (b[i] - f[i]*b[i+2] - c[i]*b[i+1])/d[i]
+    end
+    return b
+end
+#----------------------ooo----------------------------
+#-----------------------------------------------------
+#        Non-symmertrical Biharmonic PDMA
+#-----------------------------------------------------
+function BiharmonicPDMA_1D(a, b, c, d, e, r)
+
+    N = length(r)
+    rho = zeros(eltype(r), N)
+    alpha = zeros(eltype(r), N-2)
+    beta = zeros(eltype(r), N-4)
+    x = zeros(eltype(r), N)
+
+    alpha[1] = d[1]/c[1]
+    beta[1] = e[1]/c[1]
+
+    alpha[2] = d[2]/c[2]
+    beta[2] = e[2]/c[2]
+
+    alpha[3] = (d[3]-b[1]*beta[1])/(c[3]-b[1]*alpha[1])
+    beta[3] = e[3]/(c[3]-b[1]*alpha[1])
+
+    alpha[4] = (d[4]-b[2]*beta[2])/(c[4]-b[2]*alpha[2])
+    beta[4] = e[4]/(c[4]-b[2]*alpha[2])
+
+    rho[1] = r[1]/c[1]
+    rho[2] = r[2]/c[2]
+    rho[3] = (r[3] - b[1]*rho[1])/(c[3]-b[1]*alpha[1])
+    rho[4] = (r[4] - b[2]*rho[2])/(c[4]-b[2]*alpha[2])
+
+    for i in 5:N
+        rho[i] = (r[i] - a[i-4]*rho[i-4] - rho[i-2]*(b[i-2] - a[i-4]*alpha[i-4])) / (c[i] - a[i-4]*beta[i-4] - alpha[i-2]*(b[i-2] - a[i-4]*alpha[i-4]))
+        if i <= (N-2)
+            alpha[i] = (d[i] - beta[i-2]*(b[i-2] - a[i-4]*alpha[i-4])) / (c[i] - a[i-4]*beta[i-4] - alpha[i-2]*(b[i-2] - a[i-4]*alpha[i-4]))
+        end
+        if i <= (N-4)
+            beta[i] = e[i]/(c[i] - a[i-4]*beta[i-4] - alpha[i-2]*(b[i-2] - a[i-4]*alpha[i-4]))
+        end
+    end
+    for i in N:-1:1
+        x[i] = rho[i]
+        if i<=(N-2)
+            x[i] -= alpha[i]*x[i+2]
+        end
+        if i<=(N-4)
+            x[i] -= beta[i]*x[i+4]
+        end
+    end
+    return x
+end
+#----------------------ooo----------------------------
+#-----------------------------------------------------
+#        Symmertrical Biharmonic PDMA
+#-----------------------------------------------------
+function PDMA_SymLU(d,e,f)
+    n = length(d)
+    m = length(e)
+    k = n - m
+    for i in 1:(n-2*k)
+        lam = e[i]/d[i]
+        d[i+k] -= lam*e[i]
+        e[i+k] -= lam*f[i]
+        e[i] = lam
+        lam = f[i]/d[i]
+        d[i+2*k] -= lam*f[i]
+        f[i] = lam
+    end
+    lam = e[n-3]/d[n-3]
+    d[n-1] -= lam*e[n-3]
+    e[n-3] = lam
+    lam = e[n-2]/d[n-2]
+    d[n] -= lam*e[n-2]
+    e[n-2] = lam
+    return d,e,f
+end
+function PDMA_Symsolve(d,e,f,b)
+    d,e,f = PDMA_SymLU(d,e,f)
+    n = length(d)
+
+    b[3] -= e[1]*b[1]
+    b[4] -= e[2]*b[2]
+    for k in 5:n
+        b[k] -= (e[k-2]*b[k-2] + f[k-4]*b[k-4])
+    end
+    b[n] /= d[n]
+    b[n-1] /= d[n-1]
+    b[n-2] /= d[n-2]
+    b[n-2] -= e[n-2]*b[n]
+    b[n-3] /= d[n-3]
+    b[n-3] -= e[n-3]*b[n-1]
+    for k in (n-4):-1:1
+        b[k] /= d[k]
+        b[k] -= (e[k]*b[k+2] + f[k]*b[k+4])
     end
     return b
 end
@@ -427,7 +561,7 @@ function fstR(fj, fk, quad, axis, BC)
     b = (pi/2)*ones(eltype(k), N-3).*(ak[1:end-1] .+ ak1[2:end-1].*bk[1:end-1])
     c = (pi/2)*ones(eltype(k), N-4).*bk[1:end-2]
 
-    fk[1:end-2] = PDMA_1D(a, b, c, fk[1:end-2])
+    fk[1:end-2] = SymmetricalPDMA_1D(a, b, c, fk[1:end-2])
     return fk
 end
 #----------------------ooo----------------------------
@@ -443,47 +577,45 @@ function fastShenScalarB(fj, fk, quad, axis)
     k  = Biharmonicwavenumbers(length(fj))
     Tk = fk
     Tk = fastChebScalar(fj, Tk, quad, axis)
-    fk[:] = Tk[:]
+    fk[:] = Tk
     fk[1:end-4] -= 2*((k+2)./(k+3)).*Tk[3:end-2]
-    fk[1:end-4] += ((k+1)./(k+3)).* Tk[5:end]
+    fk[1:end-4] += ((k+1)./(k+3)).*Tk[5:end]
     fk[end-3:end] = 0.0
     return fk
 end
 function ifstB(fk, fj, quad, axis)
     """Fast inverse Shen scalar transform
     """
-    w_hat = fk
     k = Biharmonicwavenumbers(length(fk))
     factor1 = -2*(k+2)./(k+3)
     factor2 = (k+1)./(k+3)
-
-    w_hat[:] = 0.0
+    w_hat = zeros(eltype(fk), length(fk))
     w_hat[1:end-4] = fk[1:end-4]
     w_hat[3:end-2] += factor1.*fk[1:end-4]
     w_hat[5:end]   += factor2.*fk[1:end-4]
     fj = ifct(w_hat, fj, quad, axis)
     return fj
 end
-
 function fstB(fj, fk, quad, axis)
     """Fast Shen transform .
     """
-    fk = fastShenScalar(fj, fk, quad, axis)
+    fk = fastShenScalarB(fj, fk, quad, axis)
     N = length(fj)
     k = Biharmonicwavenumbers(N)
     N -= 4
-    ckp = ones(N)
+    # ckp = ones(N)
     if quad == "GL"
         ck = ones(N); ck[1] = 2
     elseif quad == "GC"
         ck = ones(N); ck[1] = 2; ck[end] = 2
     end
-    c = (ck + 4*((k+2)./(k+3)).^2 + ckp.*((k+1)./(k+3)).^2)*pi/2.
-    d = -((k[1:end-2]+2)./(k[1:end-2]+3) + (k[1:end-2]+4).*(k[1:end-2]+1)./((k[1:end-2]+5).*(k[1:end-2]+3)))*pi
-    e = (k[1:end-4]+1)./(k[1:end-4]+3)*pi/2
+    c = (ck + 4*((k+2)./(k+3)).^2 + ((k+1)./(k+3)).^2)*pi/2.
+    d = -((k[1:end-2]+2)./(k[1:end-2]+3) .+ (k[1:end-2]+4).*(k[1:end-2]+1)./((k[1:end-2]+5).*(k[1:end-2]+3)))*pi
+    e = ((k[1:end-4]+1)./(k[1:end-4]+3))*pi/2.
     b = d
     a = e
-    fk[1:end-4] = PDMA_1D_2Version(a, b, c, d, e,fk[1:end-4],fk[1:end-4])
+    #fk[1:end-4] = BiharmonicPDMA_1D(a, b, c, d, e,fk[1:end-4])
+    fk[1:end-4] = PDMA_Symsolve(c, d, e,fk[1:end-4])
     return fk
 end
 #----------------------ooo----------------------------
@@ -491,7 +623,7 @@ end
 #                       Tests
 # ----------------------------------------------------
 using Base.Test
-N = 2^3;
+N = 2^4;
 axis = 1
 BC = "ND"
 quad = "GL"
@@ -503,14 +635,21 @@ end
 x = collect(0:N-1)*2*pi/N
 z = points
 U, V, U_hat = similar(z), similar(z), similar(z)
-U = z .- (1./3.)*z.^3;
-#U = z-(8./13.)*(-1. + 2*z.^2) - (5./13.)*(-3*z + 4*z.^3)
-println(U)
-U_hat = fastShenScalarB(U, U_hat, quad, axis)
-println(U_hat)
-# U_hat = fstR(U, U_hat, quad, axis, BC)
-# V = ifstR(U_hat, V, quad, axis, BC);
-# @test isapprox(U, V)
+#U = z .- (1./3.)*z.^3;
+#U = z-(8./13.)*(-1. + 2*z.^2) - (5./13.)*(-3*z + 4*z.^3) # Robin
+U = z -(3./2.)*(4.*z.^3 - 3.*z)+(1./2.)*(16.*z.^5 -20.*z.^3 +5.*z)
+# U = 1. - (4./3.)*(-1. + 2*z.^2) + (1./3.)*(1. - 8.*z.^2 + 8.*z.^4)
+#println(U)
+#U_hat = fastShenScalarB(U, U_hat, quad, axis)
+
+U_hat = fstB(U, U_hat, quad, axis)
+V = ifstB(U_hat, V, quad, axis);
+@test isapprox(U, V)
+
+# using PyCall
+# using PyPlot
+# plot(z,U)
+# plot(z,V)
 
 # V = fastShenDerivativeN(U, V, quad, axis)
 # U_hat = 1.- z.^2;
@@ -537,7 +676,8 @@ println(U_hat)
 #     #phi = chebyshevDirichletPolynomials(n, z)
 #     #phi = chebyshevNeumannPolynomials(n, z)
 #     # phi = chebyshevPolynomials(n, z)
-#     phi = chebyshevRobinPolynomials(BC, n, z)
+#     #phi = chebyshevRobinPolynomials(BC, n, z)
+#     phi = chebyshevBiharmonicPolynomials(n, z)
 #     for k in 1:n
 #         plot(z[1:end], phi[1:end, k])
 #     end
