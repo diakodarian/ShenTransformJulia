@@ -797,7 +797,7 @@ function makePlots(n, z)
     phi[:,:,2] = chebyshevDirichletPolynomials(n, z)
     phi[:,:,3] = chebyshevNeumannPolynomials(n, z)
     phi[:,:,4] = chebyshevRobinPolynomials("ND", n, z)
-    phi[:,:,5] = chebyshevRobinPolynomials("ND", n, z)
+    phi[:,:,5] = chebyshevRobinPolynomials("DN", n, z)
     phi[:,:,6] = chebyshevBiharmonicPolynomials(n, z)
     phi[:,:,7] = chebyshevNeumannBiharmonicPolynomials(n, z)
     for i in 1:7
