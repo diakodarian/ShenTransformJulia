@@ -93,6 +93,20 @@ function chebyshevBiharmonicPolynomials(N, x)
     end
     return phi
 end
+function chebyshevNeumannBiharmonicPolynomials(N, x)
+    l = length(x)
+    phi = zeros(l, N)
+    k = Biharmonicwavenumbers(N)
+    factor1 = -2*(k.^2)./((k+2).*(k+3))
+    factor2 = (k.^2).*(k+1)./((k+3).*(k+4).^2)
+    Tk = chebyshevPolynomials(N, x)
+    for i in 1:N-4
+        for j in 1:l
+            phi[j,i] = Tk[j,i] + factor1[i]*Tk[j,i+2]+ factor2[i]*Tk[j,i+4]
+        end
+    end
+    return phi
+end
 function wavenumbers{T<:Int}(N::T)
     return collect(0:N-3)
 end
@@ -392,7 +406,7 @@ function ifstD(fk, fj, quad, axis)
     fj = ifct(w_hat, fj, quad, axis)
     return fj
 end
-function fstD(fj, fk, quad, aixs)
+function fstD(fj, fk, quad, axis)
     """Fast Shen transform
     """
     fk = fastShenScalarD(fj, fk, quad, axis)
@@ -620,66 +634,198 @@ function fstB(fj, fk, quad, axis)
 end
 #----------------------ooo----------------------------
 # ----------------------------------------------------
+#               Shen Neumann Biharmonic transform
+# ----------------------------------------------------
+function BiharmonicFactor(k, BiharmonicBC)
+    if BiharmonicBC == "NB"
+        factor1 = -2*(k.^2)./((k+2).*(k+3))
+        factor2 = (k.^2).*(k+1)./((k+3).*(k+4).^2)
+    elseif BiharmonicBC == "DB"
+        factor1 = -2*(k+2)./(k+3)
+        factor2 = (k+1)./(k+3)
+    end
+    return factor1, factor2
+end
+function fastShenScalarNB(fj, fk, quad, axis, BiharmonicBC)
+    """Fast Shen scalar product.
+    """
+    k  = Biharmonicwavenumbers(length(fj))
+    factor1, factor2 = BiharmonicFactor(k, BiharmonicBC)
+    Tk = fk
+    Tk = fastChebScalar(fj, Tk, quad, axis)
+    fk[:] = Tk
+    fk[1:end-4] += factor1.*Tk[3:end-2]
+    fk[1:end-4] += factor2.*Tk[5:end]
+    fk[end-3:end] = 0.0
+    return fk
+end
+function ifstNB(fk, fj, quad, axis, BiharmonicBC)
+    """Fast inverse Shen scalar transform
+    """
+    k = Biharmonicwavenumbers(length(fk))
+    factor1, factor2 = BiharmonicFactor(k, BiharmonicBC)
+    w_hat = zeros(eltype(fk), length(fk))
+    w_hat[1:end-4] = fk[1:end-4]
+    w_hat[3:end-2] += factor1.*fk[1:end-4]
+    w_hat[5:end]   += factor2.*fk[1:end-4]
+    fj = ifct(w_hat, fj, quad, axis)
+    return fj
+end
+function fstNB(fj, fk, quad, axis, BiharmonicBC)
+    """Fast Shen transform .
+    """
+    fk = fastShenScalarNB(fj, fk, quad, axis, BiharmonicBC)
+    N = length(fj)
+    k = Biharmonicwavenumbers(N)
+    factor1, factor2 = BiharmonicFactor(k, BiharmonicBC)
+    N -= 4
+    if quad == "GL"
+        ck = ones(N); ck[1] = 2
+    elseif quad == "GC"
+        ck = ones(N); ck[1] = 2; ck[end] = 2
+    end
+    c = (ck + factor1.^2 + factor2.^2)*pi/2.
+    d = (factor1[1:end-2] + factor1[3:end].*factor2[1:end-2])*pi/2.
+    e = factor2[1:end-4]*pi/2.
+
+    # c = (ck + 4*((k.^2)./((k+2).*(k+3))).^2 + ((k.^2).*(k+1)./((k+3).*(k+4).^2)).^2)*pi/2.
+    # d = (-2*(k[1:end-2].^2)./((k[1:end-2]+2).*(k[1:end-2]+3)) +
+    #     (-2*((k[1:end-2]+2).^2)./((k[1:end-2]+4).*(k[1:end-2]+5))).*
+    #     ((k[1:end-2].^2).*(k[1:end-2]+1)./((k[1:end-2]+3).*(k[1:end-2]+4).^2)) )*pi/2.
+    # e = ((k[1:end-4].^2).*(k[1:end-4]+1)./((k[1:end-4]+3).*(k[1:end-4]+4).^2))*pi/2.
+
+    # b = d
+    # a = e
+    #fk[1:end-4] = BiharmonicPDMA_1D(a, b, c, d, e,fk[1:end-4])
+    fk[1:end-4] = PDMA_Symsolve(c, d, e,fk[1:end-4])
+    return fk
+end
+#----------------------ooo----------------------------
+# ----------------------------------------------------
 #                       Tests
 # ----------------------------------------------------
 using Base.Test
-N = 2^4;
-axis = 1
-BC = "ND"
-quad = "GL"
-if quad == "GC"
-    points, weights = chebyshevGaussNodesWeights(N);
-elseif quad == "GL"
-    points, weights = chebyshevGaussLobattoNodesWeights(N);
+
+function nodesWeights(N, quad)
+    if quad == "GC"
+        points, weights = chebyshevGaussNodesWeights(N);
+    elseif quad == "GL"
+        points, weights = chebyshevGaussLobattoNodesWeights(N);
+    end
+    return points, weights
 end
-x = collect(0:N-1)*2*pi/N
-z = points
-U, V, U_hat = similar(z), similar(z), similar(z)
-#U = z .- (1./3.)*z.^3;
-#U = z-(8./13.)*(-1. + 2*z.^2) - (5./13.)*(-3*z + 4*z.^3) # Robin
-U = z -(3./2.)*(4.*z.^3 - 3.*z)+(1./2.)*(16.*z.^5 -20.*z.^3 +5.*z)
-# U = 1. - (4./3.)*(-1. + 2*z.^2) + (1./3.)*(1. - 8.*z.^2 + 8.*z.^4)
-#println(U)
-#U_hat = fastShenScalarB(U, U_hat, quad, axis)
 
-U_hat = fstB(U, U_hat, quad, axis)
-V = ifstB(U_hat, V, quad, axis);
-@test isapprox(U, V)
+function tests(N)
 
-# using PyCall
-# using PyPlot
-# plot(z,U)
-# plot(z,V)
+    axis = 1
+    U = zeros(Float64, N)
+    V, U_hat = similar(U), similar(U)
+
+    # Biharmonic
+    for BiharmonicBC in ["DB", "NB"]
+        for quad in ["GL", "GC"]
+            points, weights = nodesWeights(N, quad)
+            z = points
+            if BiharmonicBC == "DB"
+                U = z -(3./2.)*(4.*z.^3 - 3.*z)+(1./2.)*(16.*z.^5 -20.*z.^3 +5.*z)
+            elseif BiharmonicBC == "NB"
+                U = -1. + 2.*z.^2 - (2./5.)*(1. - 8.*z.^2 + 8.*z.^4) +
+                (1./15.)*(-1. + 18.*z.^2 - 48.*z.^4 + 32.*z.^6)
+            end
+            U_hat = fstNB(U, U_hat, quad, axis, BiharmonicBC)
+            V = ifstNB(U_hat, V, quad, axis, BiharmonicBC)
+            @test isapprox(U, V)
+            println("Test: Biharmonic transform for  ", BiharmonicBC, "  ", quad, " succeeded.")
+        end
+    end
+    # Robin
+    for BC in ["ND", "DN"]
+        for quad in ["GL", "GC"]
+            points, weights = nodesWeights(N, quad)
+            z = points
+            if BC == "ND"
+                U = z-(8./13.)*(-1. + 2*z.^2) - (5./13.)*(-3*z + 4*z.^3);
+            elseif BC == "DN"
+                U = z + (8./13.)*(-1. + 2.*z.^2) - (5./13.)*(-3*z + 4*z.^3);
+            end
+            U_hat = fstR(U, U_hat, quad, axis, BC)
+            V = ifstR(U_hat, V, quad, axis, BC)
+            @test isapprox(U, V)
+            println("Test: Robin transform for ", BC,"  ",  quad, " succeeded.")
+        end
+    end
+    # Neumann
+    for quad in ["GL", "GC"]
+        points, weights = nodesWeights(N, quad)
+        z = points
+        U = z .- (1./3.)*z.^3;
+        U_hat = fstN(U, U_hat, quad, axis)
+        V = ifstN(U_hat, V, quad, axis)
+        @test isapprox(U, V)
+        println("Test: Neumann transform for ", quad, " succeeded.")
+    end
+    # Dirichlet
+    for quad in ["GL", "GC"]
+        points, weights = nodesWeights(N, quad)
+        z = points
+        U = 1.0 - z.^2;
+        U_hat = fstD(U, U_hat, quad, axis)
+        V = ifstD(U_hat, V, quad, axis)
+        @test isapprox(U, V)
+        println("Test: Dirichlet transform for ", quad, " succeeded.")
+    end
+    # Chebyshev
+    for quad in ["GL", "GC"]
+        points, weights = nodesWeights(N, quad)
+        z = points
+        U = 1.0 - z.^2;
+        U_hat = fct(U, U_hat, quad, axis)
+        V = ifct(U_hat, V, quad, axis)
+        @test isapprox(U, V)
+        println("Test: Chebyshev transform for ", quad, " succeeded.")
+    end
+end
+#----------------------ooo----------------------------
+# ----------------------------------------------------
+#             The plots of polynomials
+# ----------------------------------------------------
+using PyCall
+using PyPlot
+function makePlots(n, z)
+    phi = Array{Float64}(length(z), n, 7)
+    phi[:,:,1] = chebyshevPolynomials(n, z)
+    phi[:,:,2] = chebyshevDirichletPolynomials(n, z)
+    phi[:,:,3] = chebyshevNeumannPolynomials(n, z)
+    phi[:,:,4] = chebyshevRobinPolynomials("ND", n, z)
+    phi[:,:,5] = chebyshevRobinPolynomials("ND", n, z)
+    phi[:,:,6] = chebyshevBiharmonicPolynomials(n, z)
+    phi[:,:,7] = chebyshevNeumannBiharmonicPolynomials(n, z)
+    for i in 1:7
+        fig = figure(figsize=(5,5))
+        for k in 1:n
+            plot(z[1:end], phi[1:end, k, i])
+        end
+        axis("tight")
+        xlabel("x")
+        ylabel("phi_k")
+    end
+end
+#----------------------ooo----------------------------
+
+N = 2^6
+tests(N)
+
+quad = "GL"
+z, w = nodesWeights(N, quad)
+n = 10
+makePlots(n, z)
 
 # V = fastShenDerivativeN(U, V, quad, axis)
 # U_hat = 1.- z.^2;
 # @test isapprox(U_hat, V)
-
-#U_hat = fstR(U, U_hat, quad, axis, BC);
-# V = ifstN(U_hat, V, quad, axis);
-# @test isapprox(U, V)
-# println("1D test succeeded!")
 
 # Test the derivative
 # V = 2*z;
 # U_hat = fastChebDerivative(U, U_hat, quad, axis)
 # @test isapprox(U_hat, V)
 # println("Derivative test succeeded!")
-
-# The plots of polynomials
-# testPolys = 1
-# using PyCall
-# using PyPlot
-# if testPolys == 1
-#
-#     n = 8
-#     #phi = chebyshevDirichletPolynomials(n, z)
-#     #phi = chebyshevNeumannPolynomials(n, z)
-#     # phi = chebyshevPolynomials(n, z)
-#     #phi = chebyshevRobinPolynomials(BC, n, z)
-#     phi = chebyshevBiharmonicPolynomials(n, z)
-#     for k in 1:n
-#         plot(z[1:end], phi[1:end, k])
-#     end
-# end
-#----------------------ooo----------------------------
