@@ -281,20 +281,33 @@ type Robin <: SpecTransf
     axis::Int64
     quad::ASCIIString
     BC::ASCIIString
-end
-function shenCoefficients{T<:Real}(F::Robin, k::Array{T, 1})
-    """
-    Shen basis functions given by
-    phi_k = T_k + a_k*T_{k+1} + b_k*T_{k+2},
-    satisfy the imposed Robin (mixed) boundary conditions for a unique set of {a_k, b_k}.
-    """
-    if F.BC == "ND"
-        ak = -4*(k+1)./((k+1).^2 .+ (k+2).^2)
-    elseif F.BC == "DN"
-        ak = 4*(k+1)./((k+1).^2 .+ (k+2).^2)
+    N::Int64
+    k::Array{Float64, 1}
+    ak::Array{Float64, 1}
+    bk::Array{Float64, 1}
+    k1::Array{Float64, 1}
+    ak1::Array{Float64, 1}
+    bk1::Array{Float64, 1}
+
+    function Robin(axis, quad, BC, N)
+        """
+        Shen basis functions given by
+        phi_k = T_k + a_k*T_{k+1} + b_k*T_{k+2},
+        satisfy the imposed Robin (mixed) boundary conditions for a unique set of {a_k, b_k}.
+        """
+        k = collect(0:N-3)
+        k1 = collect(0:N-2)
+        if BC == "ND"
+            ak = -4*(k+1)./((k+1).^2 .+ (k+2).^2)
+            ak1 = -4*(k1+1)./((k1+1).^2 .+ (k1+2).^2)
+        elseif BC == "DN"
+            ak = 4*(k+1)./((k+1).^2 .+ (k+2).^2)
+            ak1 = 4*(k1+1)./((k1+1).^2 .+ (k1+2).^2)
+        end
+        bk = -((k.^2 + (k+1).^2)./((k+1).^2 .+ (k+2).^2))
+        bk1 = -((k1.^2 + (k1+1).^2)./((k1+1).^2 .+ (k1+2).^2))
+        new(axis, quad, BC, N, k, ak, bk, k1, ak1, bk1)
     end
-    bk = -((k.^2 + (k+1).^2)./((k+1).^2 .+ (k+2).^2))
-    return ak, bk
 end
 function fastShenScalar{T<:Real}(F::Robin, fj::Array{T, 1}, fk::Array{T, 1})
     """Fast Shen scalar product
@@ -303,21 +316,17 @@ function fastShenScalar{T<:Real}(F::Robin, fj::Array{T, 1}, fk::Array{T, 1})
     phi_k = T_k + a_k*T_{k+1} + b_k*T_{k+2}
     """
     fk = fastChebScalar(F, fj)
-    k  = wavenumbers(length(fj))
-    ak, bk = shenCoefficients(F, k)
     fk_tmp = fk
-    fk[1:end-2] = fk_tmp[1:end-2] + ak.*fk_tmp[2:end-1] + bk.*fk_tmp[3:end]
+    fk[1:end-2] = fk_tmp[1:end-2] + (F.ak).*fk_tmp[2:end-1] + (F.bk).*fk_tmp[3:end]
     return fk
 end
 function ifst{T<:Real}(F::Robin, fk::Array{T, 1}, fj::Array{T, 1})
     """Fast inverse Shen scalar transform for Robin BC.
     """
-    k = wavenumbers(length(fk))
     w_hat = zeros(eltype(fk), length(fk))
-    ak, bk = shenCoefficients(F, k)
     w_hat[1:end-2] = fk[1:end-2]
-    w_hat[2:end-1] += ak.*fk[1:end-2]
-    w_hat[3:end]   += bk.*fk[1:end-2]
+    w_hat[2:end-1] += (F.ak).*fk[1:end-2]
+    w_hat[3:end]   += (F.bk).*fk[1:end-2]
     fj = ifct(F, w_hat, fj)
     return fj
 end
@@ -326,18 +335,14 @@ function fst{T<:Real}(F::Robin, fj::Array{T, 1}, fk::Array{T, 1})
     """
     fk = fastShenScalar(F, fj, fk)
     N = length(fj)
-    k = wavenumbers(N)
-    k1 = wavenumbers(N+1)
-    ak, bk = shenCoefficients(F, k)
-    ak1, bk1 = shenCoefficients(F, k1)
     if F.quad == "GL"
-        ck = ones(eltype(k), N-2); ck[1] = 2
+        ck = ones(eltype(fj), N-2); ck[1] = 2
     elseif F.quad == "GC"
-        ck = ones(eltype(k), N-2); ck[1] = 2; ck[end] = 2
+        ck = ones(eltype(fj), N-2); ck[1] = 2; ck[end] = 2
     end
-    a = (pi/2)*(ck .+ ak.^2 .+ bk.^2)
-    b = (pi/2)*ones(eltype(k), N-3).*(ak[1:end-1] .+ ak1[2:end-1].*bk[1:end-1])
-    c = (pi/2)*ones(eltype(k), N-4).*bk[1:end-2]
+    a = (pi/2)*(ck .+ (F.ak).^2 .+ (F.bk).^2)
+    b = (pi/2)*ones(eltype(fj), N-3).*((F.ak)[1:end-1] .+ (F.ak1[2:end-1]).*(F.bk[1:end-1]))
+    c = (pi/2)*ones(eltype(fj), N-4).*(F.bk[1:end-2])
 
     fk[1:end-2] = SymmetricalPDMA_1D(a, b, c, fk[1:end-2])
     return fk
@@ -350,39 +355,41 @@ type Biharmonic <: SpecTransf
     axis::Int64
     quad::ASCIIString
     BiharmonicBC::ASCIIString
-end
-function BiharmonicFactor{T<:Real}(F::Biharmonic, k::Array{T, 1})
-    if F.BiharmonicBC == "NB"
-        factor1 = -2*(k.^2)./((k+2).*(k+3))
-        factor2 = (k.^2).*(k+1)./((k+3).*(k+4).^2)
-    elseif F.BiharmonicBC == "DB"
-        factor1 = -2*(k+2)./(k+3)
-        factor2 = (k+1)./(k+3)
+    N::Int64
+    k::Array{Float64, 1}
+    factor1::Array{Float64, 1}
+    factor2::Array{Float64, 1}
+
+    function Biharmonic(axis, quad, BiharmonicBC, N)
+        k = collect(0:N-5)
+        if BiharmonicBC == "NB"
+            factor1 = -2*(k.^2)./((k+2).*(k+3))
+            factor2 = (k.^2).*(k+1)./((k+3).*(k+4).^2)
+        elseif BiharmonicBC == "DB"
+            factor1 = -2*(k+2)./(k+3)
+            factor2 = (k+1)./(k+3)
+        end
+        new(axis, quad, BiharmonicBC, N, k, factor1, factor2)
     end
-    return factor1, factor2
 end
 function fastShenScalar{T<:Real}(F::Biharmonic, fj::Array{T, 1}, fk::Array{T, 1})
     """Fast Shen scalar product.
     """
-    k  = Biharmonicwavenumbers(length(fj))
-    factor1, factor2 = BiharmonicFactor(F, k)
     Tk = fk
     Tk = fastChebScalar(F, fj)
     fk[:] = Tk
-    fk[1:end-4] += factor1.*Tk[3:end-2]
-    fk[1:end-4] += factor2.*Tk[5:end]
+    fk[1:end-4] += F.factor1.*Tk[3:end-2]
+    fk[1:end-4] += F.factor2.*Tk[5:end]
     fk[end-3:end] = 0.0
     return fk
 end
 function ifst{T<:Real}(F::Biharmonic, fk::Array{T, 1}, fj::Array{T, 1})
     """Fast inverse Shen scalar transform
     """
-    k = Biharmonicwavenumbers(length(fk))
-    factor1, factor2 = BiharmonicFactor(F, k)
     w_hat = zeros(eltype(fk), length(fk))
     w_hat[1:end-4] = fk[1:end-4]
-    w_hat[3:end-2] += factor1.*fk[1:end-4]
-    w_hat[5:end]   += factor2.*fk[1:end-4]
+    w_hat[3:end-2] += F.factor1.*fk[1:end-4]
+    w_hat[5:end]   += F.factor2.*fk[1:end-4]
     fj = ifct(F, w_hat, fj)
     return fj
 end
@@ -391,17 +398,15 @@ function fst{T<:Real}(F::Biharmonic, fj::Array{T, 1}, fk::Array{T, 1})
     """
     fk = fastShenScalar(F, fj, fk)
     N = length(fj)
-    k = Biharmonicwavenumbers(N)
-    factor1, factor2 = BiharmonicFactor(F, k)
     N -= 4
     if F.quad == "GL"
         ck = ones(N); ck[1] = 2
     elseif F.quad == "GC"
         ck = ones(N); ck[1] = 2; ck[end] = 2
     end
-    c = (ck + factor1.^2 + factor2.^2)*pi/2.
-    d = (factor1[1:end-2] + factor1[3:end].*factor2[1:end-2])*pi/2.
-    e = factor2[1:end-4]*pi/2.
+    c = (ck + F.factor1.^2 + F.factor2.^2)*pi/2.
+    d = (F.factor1[1:end-2] + F.factor1[3:end].*F.factor2[1:end-2])*pi/2.
+    e = F.factor2[1:end-4]*pi/2.
 
     fk[1:end-4] = PDMA_Symsolve(c, d, e,fk[1:end-4])
     return fk
@@ -458,7 +463,7 @@ function tests(N)
     # Robin
     for BC in ["ND", "DN"]
         for quad in ["GL", "GC"]
-            F = Robin(axis, quad, BC)
+            F = Robin(axis, quad, BC, N)
             x, w = nodesWeights(F, x, w)
             if BC == "ND"
                 U = x-(8./13.)*(-1. + 2*x.^2) - (5./13.)*(-3*x + 4*x.^3);
@@ -474,7 +479,7 @@ function tests(N)
     # Biharmonic
     for BiharmonicBC in ["DB", "NB"]
         for quad in ["GL", "GC"]
-            F = Biharmonic(axis, quad, BiharmonicBC)
+            F = Biharmonic(axis, quad, BiharmonicBC, N)
             x, w = nodesWeights(F, x, w)
             if BiharmonicBC == "DB"
                 U = x -(3./2.)*(4.*x.^3 - 3.*x)+(1./2.)*(16.*x.^5 -20.*x.^3 +5.*x)
@@ -490,5 +495,5 @@ function tests(N)
     end
 end
 
-n = 2^6;
+n = 2^7;
 tests(n)
