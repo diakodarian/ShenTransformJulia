@@ -383,8 +383,8 @@ end
 #           Shen Dirichlet transform
 #-----------------------------------------------------
 function fastShenScalarD(fj, fk, quad, axis)
-        fk = fastChebScalar(fj, fk, quad, axis)
-        fk[1:end-2] -= fk[3:end]
+    fk = fastChebScalar(fj, fk, quad, axis)
+    fk[1:end-2] -= fk[3:end]
     return fk
 end
 function ifstD(fk, fj, quad, axis)
@@ -789,36 +789,36 @@ end
 # ----------------------------------------------------
 #             The plots of polynomials
 # ----------------------------------------------------
-using PyCall
-using PyPlot
-function makePlots(n, z)
-    phi = Array{Float64}(length(z), n, 7)
-    phi[:,:,1] = chebyshevPolynomials(n, z)
-    phi[:,:,2] = chebyshevDirichletPolynomials(n, z)
-    phi[:,:,3] = chebyshevNeumannPolynomials(n, z)
-    phi[:,:,4] = chebyshevRobinPolynomials("ND", n, z)
-    phi[:,:,5] = chebyshevRobinPolynomials("DN", n, z)
-    phi[:,:,6] = chebyshevBiharmonicPolynomials(n, z)
-    phi[:,:,7] = chebyshevNeumannBiharmonicPolynomials(n, z)
-    for i in 1:7
-        fig = figure(figsize=(5,5))
-        for k in 1:n
-            plot(z[1:end], phi[1:end, k, i])
-        end
-        axis("tight")
-        xlabel("x")
-        ylabel("phi_k")
-    end
-end
+# using PyCall
+# using PyPlot
+# function makePlots(n, z)
+#     phi = Array{Float64}(length(z), n, 7)
+#     phi[:,:,1] = chebyshevPolynomials(n, z)
+#     phi[:,:,2] = chebyshevDirichletPolynomials(n, z)
+#     phi[:,:,3] = chebyshevNeumannPolynomials(n, z)
+#     phi[:,:,4] = chebyshevRobinPolynomials("ND", n, z)
+#     phi[:,:,5] = chebyshevRobinPolynomials("DN", n, z)
+#     phi[:,:,6] = chebyshevBiharmonicPolynomials(n, z)
+#     phi[:,:,7] = chebyshevNeumannBiharmonicPolynomials(n, z)
+#     for i in 1:7
+#         fig = figure(figsize=(5,5))
+#         for k in 1:n
+#             plot(z[1:end], phi[1:end, k, i])
+#         end
+#         axis("tight")
+#         xlabel("x")
+#         ylabel("phi_k")
+#     end
+# end
 #----------------------ooo----------------------------
 
 N = 2^6
-tests(N)
+@time tests(N)
 
-quad = "GL"
-z, w = nodesWeights(N, quad)
-n = 10
-makePlots(n, z)
+# quad = "GL"
+# z, w = nodesWeights(N, quad)
+# n = 10
+# makePlots(n, z)
 
 # V = fastShenDerivativeN(U, V, quad, axis)
 # U_hat = 1.- z.^2;

@@ -1,4 +1,12 @@
 .DS_Store
 *.py
-PDMA.jl
+PDMAtest2.jl
 trid.jl
+test1.jl
+test2.jl
+nodesTest.jl
+conditioning.jl
+dcttest.jl
+transform-types.jl
+ChebScalartest.jl
+shentransform1d_1.jl
