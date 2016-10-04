@@ -10,3 +10,6 @@ dcttest.jl
 transform-types.jl
 ChebScalartest.jl
 shentransform1d_1.jl
+typeTest.jl
+mk-typeTest.jl
+sandboxTypes.jl

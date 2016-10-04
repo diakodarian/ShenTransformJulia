@@ -132,6 +132,7 @@ function fct(fj, cj, quad, axis)
         cj[:,:, 1] /= 2
         cj[:,:, end] /= 2
     end
+
     return cj
 end
 
@@ -150,6 +151,7 @@ function ifct(fk, cj, quad, axis)
             cj[:,:,2*k] -= 0.5*fk[:, : , end]
         end
     end
+    #println("fj: ", cj)
     return cj
 end
 
@@ -203,7 +205,7 @@ end
 # --------------------------------------------------
 N = 2^2;
 axis = 3
-quad = "GL"
+quad = "GC"
 if quad == "GC"
     points, weights = chebyshevGaussNodesWeights(N);
 elseif quad == "GL"
@@ -216,7 +218,7 @@ for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
 U, V, U_hat = similar(X),  similar(X),  similar(X)
 U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
 U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
-U[view(3)...] = X(3).^2
+U[view(3)...] = 1.-X(3).^2
 
 U_hat[view(3)...] = fct(U(3), U_hat(3), quad, 3);
 V[view(3)...]  = ifct(U_hat(3), V(3), quad, 3);
