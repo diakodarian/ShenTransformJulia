@@ -48,8 +48,29 @@ abstract SpecTransf{T<:NodeType}
 type Chebyshev{T<:NodeType} <: SpecTransf{T} end
 type Dirichlet{T<:NodeType} <: SpecTransf{T} end
 type Neumann{T<:NodeType} <: SpecTransf{T} end
+type GeneralDirichlet{T<:NodeType} <: SpecTransf{T}
+    a::Float64
+    b::Float64
+    N::Int64
+    k::Vector{Float64}
+    ak::Vector{Float64}
+    bk::Vector{Float64}
+    k1::Vector{Float64}
+    ak1::Vector{Float64}
+    bk1::Vector{Float64}
+
+    function GeneralDirichlet(a, b, N)
+        k = collect(0:N-3)
+        k1 = collect(0:N-2)
+        ak = 0.5*(b-((-1.).^(-k))*a)
+        ak1 = 0.5*(b-((-1.).^(-k1))*a)
+        bk = -1. +0.5*(b+((-1.).^(-k))*a)
+        bk1 = -1. +0.5*(b+((-1.).^(-k))*a)
+        new(a, b, N, k, ak, bk, k1, ak1, bk1)
+    end
+end
 type Robin{T<:NodeType} <: SpecTransf{T}
-    BC::ASCIIString
+    BC::Symbol#ASCIIString
     N::Int64
     k::Vector{Float64}
     ak::Vector{Float64}
@@ -61,10 +82,10 @@ type Robin{T<:NodeType} <: SpecTransf{T}
     function Robin(BC, N)
         k = collect(0:N-3)
         k1 = collect(0:N-2)
-        if BC == "ND"
+        if eval(BC) == "ND"
             ak = -4*(k+1)./((k+1).^2 .+ (k+2).^2)
             ak1 = -4*(k1+1)./((k1+1).^2 .+ (k1+2).^2)
-        elseif BC == "DN"
+        elseif eval(BC) == "DN"
             ak = 4*(k+1)./((k+1).^2 .+ (k+2).^2)
             ak1 = 4*(k1+1)./((k1+1).^2 .+ (k1+2).^2)
         end
@@ -102,6 +123,8 @@ typealias DirGL Dirichlet{GL}
 typealias DirGC Dirichlet{GC}
 typealias NeuGL Neumann{GL}
 typealias NeuGC Neumann{GC}
+typealias GenDirGL GeneralDirichlet{GL}
+typealias GenDirGC GeneralDirichlet{GC}
 typealias RobinGL Robin{GL}
 typealias RobinGC Robin{GC}
 typealias BiharmGL Biharmonic{GL}
@@ -200,13 +223,13 @@ end
 #     Shen scalar product
 #-------------------------------------------------------------------------------
 @generated function fastShenScalar{T<:Real}(t::SpecTransf, fj::Vector{T}, fk::Vector{T})
-    if t==DirGL || t==DirGC
+    if t == DirGL || t == DirGC
         quote
             fk = fastChebScalar(t, fj)
             fk[1:end-2] -= fk[3:end]
             fk
         end
-    elseif t==NeuGL || t==NeuGC
+    elseif t == NeuGL || t == NeuGC
         quote
             N = length(fj)
             k = wavenumbers(N)
@@ -214,14 +237,14 @@ end
             fk[1:end-2] -= ((k./(k+2)).^2).*fk[3:end]
             fk
         end
-    elseif t==RobinGL || t==RobinGC
+    elseif t == RobinGL || t == RobinGC || t == GenDirGL || t == GenDirGC
         quote
             fk = fastChebScalar(t, fj)
             fk_tmp = fk
             fk[1:end-2] = fk_tmp[1:end-2] + (t.ak).*fk_tmp[2:end-1] + (t.bk).*fk_tmp[3:end]
             return fk
         end
-    elseif t==BiharmGL || t==BiharmGC
+    elseif t == BiharmGL || t == BiharmGC
         quote
             Tk = fk
             Tk = fastChebScalar(t, fj)
@@ -252,7 +275,7 @@ end
             w_hat[4:end] -= (k[2:end]./(k[2:end]+2)).^2.*fk[2:end-2]
             ifct(t, w_hat, fj)
         end
-    elseif t == RobinGL || t == RobinGC
+    elseif t == RobinGL || t == RobinGC || t == GenDirGL || t == GenDirGC
         quote
             w_hat = zeros(eltype(fk), length(fk))
             w_hat[1:end-2] = fk[1:end-2]
@@ -323,7 +346,7 @@ end
             fk[2:end-2] = TDMA_1D(a, b, c, fk[2:end-2])
             fk
         end
-    elseif t == RobinGC
+    elseif t == RobinGC || t == GenDirGC
         quote
             fk = fastShenScalar(t, fj, fk)
             N = length(fj)
@@ -335,7 +358,7 @@ end
             fk[1:end-2] = SymmetricalPDMA_1D(a, b, c, fk[1:end-2])
             fk
         end
-    elseif t == RobinGL
+    elseif t == RobinGL || t == GenDirGL
         quote
             fk = fastShenScalar(t, fj, fk)
             N = length(fj)
@@ -406,7 +429,7 @@ end
             df_hat[end-1] = -fk_2[end]
             ifct(t, df_hat, df)
         end
-    elseif t == RobinGL || t == RobinGC
+    elseif t == RobinGL || t == RobinGC || t == GenDirGL || t == GenDirGC
         quote
             fk = Vector{T}(t.N); fk_1 = Vector{T}(t.N-2)
             fk_2 = Vector{T}(t.N-1)
@@ -482,6 +505,19 @@ function tests(N)
         @test isapprox(U_hat, V)
         println("Test: Dirichlet transform for ", F, " succeeded.")
     end
+    # General Dirichlet
+    a = -2.0; b = 2.0;
+    for F in [GeneralDirichlet{GL}(a, b, N), GeneralDirichlet{GL}(a, b, N)]
+        x, w = NodesWeights(F, x, w)
+        U = -2.+10.*x.^2-8.*x.^4 +2.0*(-3.*x+4.*x.^3)#-2.*x+4.*x.^3;
+        U_hat = fst(F, U, U_hat)
+        V = ifst(F, U_hat, V)
+        @test isapprox(U, V)
+        U_hat = 20.*x-32.*x.^3-6.0+24.*x.^2#-2.0+12.*x.^2;
+        V = fastShenDerivative(F, U, V)
+        @test isapprox(U_hat, V)
+        println("Test: General Dirichlet transform for ", F, " succeeded.")
+    end
     # Neumann
     for F in [Neumann{GC}(), Neumann{GL}()]
         x, w = NodesWeights(F, x, w)
@@ -495,25 +531,25 @@ function tests(N)
         println("Test: Neumann transform for ", F, " succeeded.")
     end
     # Robin
-    for BC in ["ND", "DN"]
+    for BC in syms
         for F in [Robin{GC}(BC, N), Robin{GL}(BC, N)]
             x, w = NodesWeights(F, x, w)
-            if BC == "ND"
+            if eval(BC) == "ND"
                 U = x-(8./13.)*(-1. + 2*x.^2) - (5./13.)*(-3*x + 4*x.^3);
-            elseif BC == "DN"
+            elseif eval(BC) == "DN"
                 U = x + (8./13.)*(-1. + 2.*x.^2) - (5./13.)*(-3*x + 4*x.^3);
             end
             U_hat = fst(F, U, U_hat)
             V = ifst(F, U_hat, V)
             @test isapprox(U, V)
-            if BC == "ND"
+            if eval(BC) == "ND"
                 U_hat = (28./13.) - (32./13.)*x -(60./13.)*x.^2;
-            elseif BC == "DN"
+            elseif eval(BC) == "DN"
                 U_hat = (28./13.) + (32./13.)*x -(60./13.)*x.^2;
             end
             V = fastShenDerivative(F, U, V)
             @test isapprox(U_hat, V)
-            println("Test: Robin transform for ", BC, " succeeded.")
+            println("Test: Robin transform for ", eval(BC), " succeeded.")
         end
     end
     # Biharmonic
@@ -541,4 +577,8 @@ function tests(N)
     end
 end
 N = 2^7;
+BC1 = "ND"; BC2 = "DN";
+sym1 = :BC1
+sym2 = :BC2
+syms = [sym1, sym2]
 tests(N)
