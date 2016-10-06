@@ -4,15 +4,6 @@ using TDMA
 using PDMA
 
 #-------------------------------------------------------------------------------
-#     Wavenumber vector
-#-------------------------------------------------------------------------------
-function wavenumbers{T}(N::T)
-    return collect(0:N-3)
-end
-function Biharmonicwavenumbers{T}(N::T)
-    return collect(0:N-5)
-end
-#-------------------------------------------------------------------------------
 #   dct - discrete cosine transform
 #-------------------------------------------------------------------------------
 type DctType{N}
@@ -46,13 +37,40 @@ type GC <: NodeType end
 #-------------------------------------------------------------------------------
 abstract SpecTransf{T<:NodeType}
 type Chebyshev{T<:NodeType} <: SpecTransf{T} end
-type Dirichlet{T<:NodeType} <: SpecTransf{T} end
-type Neumann{T<:NodeType} <: SpecTransf{T} end
+type Dirichlet{T<:NodeType} <: SpecTransf{T}
+    N::Int64
+    k::Vector{Float64}
+    ck::Vector{Float64}
+    function Dirichlet(N)
+        k = collect(0:N-3)
+        if T == GL
+            ck = ones(eltype(Float64), N-2); ck[1] = 2; ck[end] = 2
+        elseif T == GC
+            ck = ones(eltype(Float64), N-2); ck[1] = 2
+        end
+        new(N, k, ck)
+    end
+end
+type Neumann{T<:NodeType} <: SpecTransf{T}
+    N::Int64
+    k::Vector{Float64}
+    ck::Vector{Float64}
+    function Neumann(N)
+        k = collect(0:N-3)
+        if T == GL
+            ck = ones(eltype(Float64), N-3); ck[end] = 2
+        elseif T == GC
+            ck = ones(eltype(Float64), N-3)
+        end
+        new(N, k, ck)
+    end
+end
 type GeneralDirichlet{T<:NodeType} <: SpecTransf{T}
     a::Float64
     b::Float64
     N::Int64
     k::Vector{Float64}
+    ck::Vector{Float64}
     ak::Vector{Float64}
     bk::Vector{Float64}
     k1::Vector{Float64}
@@ -66,13 +84,19 @@ type GeneralDirichlet{T<:NodeType} <: SpecTransf{T}
         ak1 = 0.5*(b-((-1.).^(-k1))*a)
         bk = -1. +0.5*(b+((-1.).^(-k))*a)
         bk1 = -1. +0.5*(b+((-1.).^(-k))*a)
-        new(a, b, N, k, ak, bk, k1, ak1, bk1)
+        if T == GL
+            ck = ones(eltype(Float64), N-2); ck[1] = 2; ck[end] = 2
+        elseif T == GC
+            ck = ones(eltype(Float64), N-2); ck[1] = 2
+        end
+        new(a, b, N, k, ck, ak, bk, k1, ak1, bk1)
     end
 end
 type Robin{T<:NodeType} <: SpecTransf{T}
     BC::Symbol#ASCIIString
     N::Int64
     k::Vector{Float64}
+    ck::Vector{Float64}
     ak::Vector{Float64}
     bk::Vector{Float64}
     k1::Vector{Float64}
@@ -91,28 +115,38 @@ type Robin{T<:NodeType} <: SpecTransf{T}
         end
         bk = -((k.^2 + (k+1).^2)./((k+1).^2 .+ (k+2).^2))
         bk1 = -((k1.^2 + (k1+1).^2)./((k1+1).^2 .+ (k1+2).^2))
-        new(BC, N, k, ak, bk, k1, ak1, bk1)
+        if T == GL
+            ck = ones(eltype(Float64), N-2); ck[1] = 2; ck[end] = 2
+        elseif T == GC
+            ck = ones(eltype(Float64), N-2); ck[1] = 2
+        end
+        new(BC, N, k, ck, ak, bk, k1, ak1, bk1)
     end
 end
 type Biharmonic{T<:NodeType} <: SpecTransf{T}
-    BiharmonicBC::ASCIIString
+    BiharmonicBC::Symbol#ASCIIString
     N::Int64
     k::Vector{Float64}
-    factor1::Vector{Float64}
-    factor2::Vector{Float64}
+    ck::Vector{Float64}
+    ak::Vector{Float64}
+    bk::Vector{Float64}
 
     function Biharmonic(BiharmonicBC, N)
         k = collect(0:N-5)
-        if BiharmonicBC == "NB"
-            factor1 = -2*(k.^2)./((k+2).*(k+3))
-            factor2 = (k.^2).*(k+1)./((k+3).*(k+4).^2)
-        elseif BiharmonicBC == "DB"
-            factor1 = -2*(k+2)./(k+3)
-            factor2 = (k+1)./(k+3)
+        if eval(BiharmonicBC) == "NB"
+            ak = -2*(k.^2)./((k+2).*(k+3))
+            bk = (k.^2).*(k+1)./((k+3).*(k+4).^2)
+        elseif eval(BiharmonicBC) == "DB"
+            ak = -2*(k+2)./(k+3)
+            bk = (k+1)./(k+3)
         end
-        new(BiharmonicBC, N, k, factor1, factor2)
+        if T == GL
+            ck = ones(eltype(Float64), N-4); ck[1] = 2; ck[end] = 2
+        elseif T == GC
+            ck = ones(eltype(Float64), N-4); ck[1] = 2
+        end
+        new(BiharmonicBC, N, k, ck, ak, bk)
     end
-
 end
 
 # Below we will dispatch alot on types which have GL, GC nodes. Typealias to
@@ -130,7 +164,9 @@ typealias RobinGC Robin{GC}
 typealias BiharmGL Biharmonic{GL}
 typealias BiharmGC Biharmonic{GC}
 
-# Define nodes and weights in terms of transforms
+#-------------------------------------------------------------------------------
+#   Nodes and weights 
+#-------------------------------------------------------------------------------
 function NodesWeights{T<:Real}(::SpecTGL, x::Vector{T}, w::Vector{T})
     N = length(x)
     @fastmath for i = 1:N
@@ -231,10 +267,8 @@ end
         end
     elseif t == NeuGL || t == NeuGC
         quote
-            N = length(fj)
-            k = wavenumbers(N)
             fk = fastChebScalar(t, fj)
-            fk[1:end-2] -= ((k./(k+2)).^2).*fk[3:end]
+            fk[1:end-2] -= ((t.k./(t.k+2)).^2).*fk[3:end]
             fk
         end
     elseif t == RobinGL || t == RobinGC || t == GenDirGL || t == GenDirGC
@@ -249,8 +283,8 @@ end
             Tk = fk
             Tk = fastChebScalar(t, fj)
             fk[:] = Tk
-            fk[1:end-4] += t.factor1.*Tk[3:end-2]
-            fk[1:end-4] += t.factor2.*Tk[5:end]
+            fk[1:end-4] += t.ak.*Tk[3:end-2]
+            fk[1:end-4] += t.bk.*Tk[5:end]
             fk[end-3:end] = 0.0
             fk
         end
@@ -269,10 +303,9 @@ end
         end
     elseif t == NeuGL || t == NeuGC
         quote
-            k = wavenumbers(length(fk))
             w_hat = zeros(eltype(fk), length(fk))
             w_hat[2:end-2] = fk[2:end-2]
-            w_hat[4:end] -= (k[2:end]./(k[2:end]+2)).^2.*fk[2:end-2]
+            w_hat[4:end] -= (t.k[2:end]./(t.k[2:end]+2)).^2.*fk[2:end-2]
             ifct(t, w_hat, fj)
         end
     elseif t == RobinGL || t == RobinGC || t == GenDirGL || t == GenDirGC
@@ -287,8 +320,8 @@ end
         quote
             w_hat = zeros(eltype(fk), length(fk))
             w_hat[1:end-4] = fk[1:end-4]
-            w_hat[3:end-2] += t.factor1.*fk[1:end-4]
-            w_hat[5:end]   += t.factor2.*fk[1:end-4]
+            w_hat[3:end-2] += t.ak.*fk[1:end-4]
+            w_hat[5:end]   += t.bk.*fk[1:end-4]
             ifct(t, w_hat, fj)
         end
     end
@@ -297,97 +330,44 @@ end
 #   fst - Forward Shen transform
 #-------------------------------------------------------------------------------
 @generated function fst{T<:Real}(t::SpecTransf, fj::Vector{T}, fk::Vector{T})
-    if t == DirGC
+    if t == DirGC || t == DirGL
         quote
             fk = fastShenScalar(t, fj, fk)
             N = length(fj)
-            ck = ones(eltype(fk), N-2); ck[1] = 2
             a = ones(eltype(fk), N-4)*(-pi/2)
-            b = pi/2*(ck+1)
+            b = (pi/2.)*(t.ck+1.)
             c = zeros(eltype(a), N-4)
             c[:] = a
             fk[1:end-2] = TDMA_1D(a, b, c, fk[1:end-2])
             fk
         end
-    elseif t == DirGL
+    elseif t == NeuGC || t == NeuGL
         quote
             fk = fastShenScalar(t, fj, fk)
             N = length(fj)
-            ck = ones(eltype(fk), N-2); ck[1] = 2; ck[end] = 2
-            a = ones(eltype(fk), N-4)*(-pi/2)
-            b = pi/2*(ck+1)
-            c = zeros(eltype(a), N-4)
-            c[:] = a
-            fk[1:end-2] = TDMA_1D(a, b, c, fk[1:end-2])
-            fk
-        end
-    elseif t == NeuGC
-        quote
-            fk = fastShenScalar(t, fj, fk)
-            N = length(fj)
-            k = wavenumbers(N)
-            ck = ones(eltype(k), N-3)
-            a = (-pi/2)*ones(eltype(fk), N-5).*(k[2:end-2]./(k[2:end-2]+2.)).^2
-            b = pi/2*(1.+ck.*(k[2:end]./(k[2:end]+2.)).^4)
+            a = (-pi/2.)*ones(eltype(fk), N-5).*(t.k[2:end-2]./(t.k[2:end-2]+2.)).^2
+            b = (pi/2.)*(1.+t.ck.*(t.k[2:end]./(t.k[2:end]+2.)).^4)
             c = a
             fk[2:end-2] = TDMA_1D(a, b, c, fk[2:end-2])
             fk
         end
-    elseif t == NeuGL
+    elseif t == RobinGC || t == GenDirGC || t == RobinGL || t == GenDirGL
         quote
             fk = fastShenScalar(t, fj, fk)
             N = length(fj)
-            k = wavenumbers(N)
-            ck = ones(eltype(k), N-3)
-            ck[end] = 2
-            a = (-pi/2)*ones(eltype(fk), N-5).*(k[2:end-2]./(k[2:end-2]+2.)).^2
-            b = pi/2*(1.+ck.*(k[2:end]./(k[2:end]+2.)).^4)
-            c = a
-            fk[2:end-2] = TDMA_1D(a, b, c, fk[2:end-2])
-            fk
-        end
-    elseif t == RobinGC || t == GenDirGC
-        quote
-            fk = fastShenScalar(t, fj, fk)
-            N = length(fj)
-            ck = ones(eltype(fj), N-2); ck[1] = 2; ck[end] = 2
-            a = (pi/2)*(ck .+ (t.ak).^2 .+ (t.bk).^2)
+            a = (pi/2)*(t.ck .+ (t.ak).^2 .+ (t.bk).^2)
             b = (pi/2)*ones(eltype(fj), N-3).*((t.ak)[1:end-1] .+ (t.ak1[2:end-1]).*(t.bk[1:end-1]))
             c = (pi/2)*ones(eltype(fj), N-4).*(t.bk[1:end-2])
 
             fk[1:end-2] = SymmetricalPDMA_1D(a, b, c, fk[1:end-2])
             fk
         end
-    elseif t == RobinGL || t == GenDirGL
+    elseif t == BiharmGC || t == BiharmGL
         quote
             fk = fastShenScalar(t, fj, fk)
-            N = length(fj)
-            ck = ones(eltype(fj), N-2); ck[1] = 2
-            a = (pi/2)*(ck .+ (t.ak).^2 .+ (t.bk).^2)
-            b = (pi/2)*ones(eltype(fj), N-3).*((t.ak)[1:end-1] .+ (t.ak1[2:end-1]).*(t.bk[1:end-1]))
-            c = (pi/2)*ones(eltype(fj), N-4).*(t.bk[1:end-2])
-
-            fk[1:end-2] = SymmetricalPDMA_1D(a, b, c, fk[1:end-2])
-            fk
-        end
-    elseif t == BiharmGC
-        quote
-            fk = fastShenScalar(t, fj, fk)
-            ck = ones(t.N-4); ck[1] = 2; ck[end] = 2
-            c = (ck + t.factor1.^2 + t.factor2.^2)*pi/2.
-            d = (t.factor1[1:end-2] + t.factor1[3:end].*t.factor2[1:end-2])*pi/2.
-            e = t.factor2[1:end-4]*pi/2.
-
-            fk[1:end-4] = PDMA_Symsolve(c, d, e,fk[1:end-4])
-            fk
-        end
-    elseif t == BiharmGL
-        quote
-            fk = fastShenScalar(t, fj, fk)
-            ck = ones(t.N-4); ck[1] = 2
-            c = (ck + t.factor1.^2 + t.factor2.^2)*pi/2.
-            d = (t.factor1[1:end-2] + t.factor1[3:end].*t.factor2[1:end-2])*pi/2.
-            e = t.factor2[1:end-4]*pi/2.
+            c = (t.ck + t.ak.^2 + t.bk.^2)*pi/2.
+            d = (t.ak[1:end-2] + t.ak[3:end].*t.bk[1:end-2])*pi/2.
+            e = t.bk[1:end-4]*pi/2.
 
             fk[1:end-4] = PDMA_Symsolve(c, d, e,fk[1:end-4])
             fk
@@ -404,10 +384,9 @@ end
             fk = Array{T}(N); fk_1 = Array{T}(N-2)
             fk_0 = similar(fk_1);
             fk = fst(t, fj, fk)
-            k = wavenumbers(N)
-            fk_0 = fk[1:end-2].*(1.-((k+2)./k))
+            fk_0 = fk[1:end-2].*(1.-((t.k+2.)./t.k))
             fk_1 = chebDerivativeCoefficients(fk_0, fk_1)
-            fk_2 = 2*fk[1:end-2].*(k+2)
+            fk_2 = 2.*fk[1:end-2].*(t.k+2.)
             df_hat = zeros(eltype(fj), N)
             df_hat[1:end-2] = fk_1 - vcat(0, fk_2[1:end-1])
             df_hat[end-1] = -fk_2[end]
@@ -418,11 +397,10 @@ end
             N = length(fj)
             fk = Array{T}(N); fk_1 = Array{T}(N-2)
             fk = fst(t, fj, fk)
-            k = wavenumbers(N)
-            fk_0 = fk[2:end-2].*(1.0 - ( k[2:end]./(k[2:end]+2) ) )
+            fk_0 = fk[2:end-2].*(1.0 - ( t.k[2:end]./(t.k[2:end]+2) ) )
             fk_tmp = vcat(0, fk_0)
             fk_1 = chebDerivativeCoefficients(fk_tmp, fk_1)
-            fk_2 = 2*fk[2:end-2].*(k[2:end].^2)./(k[2:end]+2)
+            fk_2 = 2*fk[2:end-2].*(t.k[2:end].^2)./(t.k[2:end]+2)
             df_hat = zeros(eltype(fk), N)
             df_hat[1] = fk_1[1]
             df_hat[2:end-2] = fk_1[2:end] - vcat(0, fk_2[1:end-1])
@@ -456,17 +434,17 @@ end
 
             fk = fst(t, fj, fk)
 
-            fk_tmp = fk[1:end-6].*t.factor2[1:end-2].*((t.k[1:end-2]+4.)./(t.k[1:end-2]+2.))
-            fk_0[1:end-2] = fk[1:end-4].*(1.0 + t.factor1.*(t.k+2.)./t.k) + vcat(0.,0.,fk_tmp)
-            fk_0[end-1] = fk[end-5]*t.factor2[end-1]*(t.k[end-1]+4.)/(t.k[end-1]+2)
-            fk_0[end] = fk[end-4]*t.factor2[end]*(t.k[end]+4.)/(t.k[end]+2)
+            fk_tmp = fk[1:end-6].*t.bk[1:end-2].*((t.k[1:end-2]+4.)./(t.k[1:end-2]+2.))
+            fk_0[1:end-2] = fk[1:end-4].*(1.0 + t.ak.*(t.k+2.)./t.k) + vcat(0.,0.,fk_tmp)
+            fk_0[end-1] = fk[end-5]*t.bk[end-1]*(t.k[end-1]+4.)/(t.k[end-1]+2)
+            fk_0[end] = fk[end-4]*t.bk[end]*(t.k[end]+4.)/(t.k[end]+2)
             fk_1 = chebDerivativeCoefficients(fk_0, fk_1)
 
-            fk_tmp2 = 2.*fk[1:end-4].*t.factor1.*(t.k+2.)
-            fk_tmp3 = 2.*fk[1:end-6].*t.factor2[1:end-2].*(t.k[1:end-2]+4.)
+            fk_tmp2 = 2.*fk[1:end-4].*t.ak.*(t.k+2.)
+            fk_tmp3 = 2.*fk[1:end-6].*t.bk[1:end-2].*(t.k[1:end-2]+4.)
             fk_2[1:end-2] = vcat(0.,fk_tmp2) + vcat(0.,0.,0.,fk_tmp3)
-            fk_2[end-1] = 2.*fk[end-5]*t.factor2[end-1]*(t.k[end-1]+4.)
-            fk_2[end] = 2.*fk[end-4]*t.factor2[end]*(t.k[end]+4.)
+            fk_2[end-1] = 2.*fk[end-5]*t.bk[end-1]*(t.k[end-1]+4.)
+            fk_2[end] = 2.*fk[end-4]*t.bk[end]*(t.k[end]+4.)
 
             df_hat[1:end-2] = fk_1 + fk_2[1:end-1]
             df_hat[end-1] = fk_2[end]
@@ -494,7 +472,7 @@ function tests(N)
         println("Test: Chebyshev transform for ", F, " succeeded.")
     end
     # Dirichlet
-    for F in [Dirichlet{GC}(), Dirichlet{GL}()]
+    for F in [Dirichlet{GC}(N), Dirichlet{GL}(N)]
         x, w = NodesWeights(F, x, w)
         U = 1.0 - x.^2;
         U_hat = fst(F, U, U_hat)
@@ -519,7 +497,7 @@ function tests(N)
         println("Test: General Dirichlet transform for ", F, " succeeded.")
     end
     # Neumann
-    for F in [Neumann{GC}(), Neumann{GL}()]
+    for F in [Neumann{GC}(N), Neumann{GL}(N)]
         x, w = NodesWeights(F, x, w)
         U = x.- (1./3.)*x.^3;
         U_hat = fst(F, U, U_hat)
@@ -531,7 +509,7 @@ function tests(N)
         println("Test: Neumann transform for ", F, " succeeded.")
     end
     # Robin
-    for BC in syms
+    for BC in RobinBC
         for F in [Robin{GC}(BC, N), Robin{GL}(BC, N)]
             x, w = NodesWeights(F, x, w)
             if eval(BC) == "ND"
@@ -553,21 +531,21 @@ function tests(N)
         end
     end
     # Biharmonic
-    for BiharmonicBC in ["DB", "NB"]
+    for BiharmonicBC in BiharmonicBCsymbols
         for F in [Biharmonic{GC}(BiharmonicBC, N), Biharmonic{GL}(BiharmonicBC, N)]
             x, w = NodesWeights(F, x, w)
-            if BiharmonicBC == "DB"
+            if eval(BiharmonicBC) == "DB"
                 U = x -(3./2.)*(4.*x.^3 - 3.*x)+(1./2.)*(16.*x.^5 -20.*x.^3 +5.*x)
-            elseif BiharmonicBC == "NB"
+            elseif eval(BiharmonicBC) == "NB"
                 U = -1. + 2.*x.^2 - (2./5.)*(1. - 8.*x.^2 + 8.*x.^4) +
                 (1./15.)*(-1. + 18.*x.^2 - 48.*x.^4 + 32.*x.^6)
             end
             U_hat = fst(F, U, U_hat)
             V = ifst(F, U_hat, V)
             @test isapprox(U, V)
-            if BiharmonicBC == "DB"
+            if eval(BiharmonicBC) == "DB"
                 U_hat = 8. - 48.*x.^2 +40.*x.^4;
-            elseif BiharmonicBC == "NB"
+            elseif eval(BiharmonicBC) == "NB"
                 U_hat = (64./5.)*x - (128./5.)*x.^3 +(64./5.)*x.^5;
             end
             V = fastShenDerivative(F, U, V)
@@ -580,5 +558,11 @@ N = 2^7;
 BC1 = "ND"; BC2 = "DN";
 sym1 = :BC1
 sym2 = :BC2
-syms = [sym1, sym2]
+RobinBC = [sym1, sym2]
+
+BiharmBC1 = "DB"; BiharmBC2 = "NB";
+symbol1 = :BiharmBC1
+symbol2 = :BiharmBC2
+BiharmonicBCsymbols = [symbol1, symbol2]
+
 tests(N)
