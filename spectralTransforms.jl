@@ -139,7 +139,6 @@ end
 function fastShenScalar{T<:Real}(F::Dirichlet, fj::Array{T, 1}, fk::Array{T, 1})
     fk = fastChebScalar(F, fj)
     fk[1:end-2] -= fk[3:end]
-    println(fk)
     return fk
 end
 function ifst{T<:Real}(F::Dirichlet, fk::Array{T, 1}, fj::Array{T, 1})
@@ -200,7 +199,6 @@ function fastShenDerivative{T<:Real}(F::Dirichlet, fj::Array{T, 1}, df::Array{T,
     df_hat[1:end-2] = fk_1 - vcat(0, fk_2[1:end-1])
     df_hat[end-1] = -fk_2[end]
     df = ifct(F, df_hat, df)
-    println("df: ", df)
     return df
 end
 #----------------------ooo----------------------------
@@ -472,6 +470,7 @@ function tests(N)
             end
             U_hat = fst(F, U, U_hat)
             V = ifst(F, U_hat, V)
+            println(BC, "  ", quad,"  U_hat: ", V)
             @test isapprox(U, V)
             println("Test: Robin transform for ", BC,"  ",  quad, " succeeded.")
         end

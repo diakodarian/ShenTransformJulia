@@ -37,8 +37,16 @@ abstract SpecTransf
 function wavenumbers3D{T<:Int}(N::T)
     ky = fftfreq(N, 1./N)
     #kz = kx[1:(N÷2+1)]; kz[end] *= -1
-    kx = collect(0:N-3)
+    kx = collect(Float64, 0:N-3)
     K = Array{Float64}(N, N, N-2, 3)
+    for (i, Ki) in enumerate(ndgrid(ky, ky, kx)) K[view(i)...] = Ki end
+    return K
+end
+function Biharmonicwavenumbers3D{T<:Int}(N::T)
+    ky = fftfreq(N, 1./N)
+    #kz = kx[1:(N÷2+1)]; kz[end] *= -1
+    kx = collect(Float64, 0:N-5)
+    K = Array{Float64}(N, N, N-4, 3)
     for (i, Ki) in enumerate(ndgrid(ky, ky, kx)) K[view(i)...] = Ki end
     return K
 end
@@ -211,32 +219,13 @@ function fastShenDerivative(F::Dirichlet, fj, df)
     fk = similar(fj); fk_1 = Array(eltype(fj), N, N, N-2)
     fk_0 = similar(fk_1);fk_2 = similar(fk_1)
     fk = fst(F, fj, fk)
-    k = wavenumbers(N)
-    for i in 1:size(fj,1)
-        for j in 1:size(fj,2)
-            for l in 1:size(fk_1,3)
-                fk_0[i,j,l] = fk[i,j,l]*(1.-((k[l]+2)/k[l]))
-            end
-        end
-    end
+    k = wavenumbers3D(N)
+    fk_0 = fk[:,:,1:end-2].*(1.-((k(3)+2.)./k(3)))
     fk_1 = chebDerivativeCoefficients_3D(F, fk_0, fk_1)
 
-    for i in 1:size(fj,1)
-        for j in 1:size(fj,2)
-            for l in 1:size(fk_2,3)
-                fk_2[i,j,l] = 2*fk[i,j,l]*(k[l]+2)
-            end
-        end
-    end
-
-    df_hat = similar(fj)
-    df_hat[:] = 0.0
-    for i in 1:size(fj,1)
-        for j in 1:size(fj,2)
-            df_hat[i,j,1:end-2] = fk_1[i,j,1:end] - cat(3, 0.0, fk_2[i,j,1:end-1])
-        end
-    end
-
+    fk_2= 2.*fk[:,:,1:end-2].*(k(3)+2.)
+    df_hat = zeros(eltype(fk), N,N,N)
+    df_hat[:,:,1:end-2] = fk_1[:,:,1:end] - cat(3, zeros(N,N), fk_2[:,:,1:end-1])
     df_hat[:,:,end-1] = -fk_2[:,:,end]
     df = ifct(F, df_hat, df)
     return df
@@ -255,28 +244,19 @@ function fastShenScalar(F::Neumann, fj, fk)
     Chebyshev transform taking into account that phi_k = T_k - (k/(k+2))**2*T_{k+2}
     Note, this is the non-normalized scalar product
     """
-    # k  = wavenumbers(last(size(fj)))
     k = wavenumbers3D(last(size(fj)))
     fk = fastChebScalar(F, fj)
-    println(size(k))
-    #println("bølgetall: ", ((k./(k+2)).^2)[:])
-    #println("fk:  ", (fk[1,1,3:end][:]).*((k./(k+2)).^2))
-    fk[:,:,1:end-2] -= (fk[:,:,3:end]).*((k./(k+2)).^2)
-    # for i in 1:size(fk,1)
-    #     for j in 1:size(fk,2)
-    #         fk[i,j,1:end-2] -= (fk[i,j,3:end][:]).*((k./(k+2)).^2)
-    #     end
-    # end
+    fk[:,:,1:end-2] -= (fk[:,:,3:end]).*((k(3)./(k(3)+2.)).^2)
     return fk
 end
 function ifst(F::Neumann, fk, fj)
     """Fast inverse Shen scalar transform
     """
     if length(size(fk))==3
-        k = wavenumbers(last(size(fk)))
+        k = wavenumbers3D(last(size(fk)))
         w_hat = zeros(eltype(fk), size(fk))
         w_hat[:,:,2:end-2] = fk[:,:,2:end-2]
-        w_hat[:,:,4:end] -= (k[2:end]./(k[2:end]+2)).^(2.).*fk[:,:,2:end-2]
+        w_hat[:,:,4:end] -= (k(3)[:,:,2:end]./(k(3)[:,:,2:end]+2.)).^(2).*fk[:,:,2:end-2]
     elseif length(size(fk))==1
         k = wavenumbers(length(fk))
         w_hat = zeros(eltype(fk), length(fk))
@@ -310,19 +290,17 @@ function fastShenDerivative(F::Neumann, fj, df)
     """
     N = last(size(fj))
     fk = similar(fj); fk_1 = Array(eltype(fj), N, N, N-2)
-    fk_0 = similar(fk_1);fk_2 = similar(fk_1)
     fk = fst(F, fj, fk)
-    k = wavenumbers(N)
-    fk_0[:] = fk[:,:,2:end-2].*(1.0 - ( k[2:end]./(k[2:end]+2) ) )
-    fk_tmp = cat(3, 0.0, fk_0)
-
+    k = wavenumbers3D(N)
+    fk_0 = fk[:,:,2:end-2].*(1.0 - ( k(3)[:,:,2:end]./(k(3)[:,:,2:end]+2.) ) )
+    fk_tmp = cat(3, zeros(N,N), fk_0)
     fk_1 = chebDerivativeCoefficients_3D(F, fk_tmp, fk_1)
 
-    fk_2[:] = 2*fk[:,:,2:end-2].*(k[2:end].^2)./(k[2:end]+2)
+    fk_2 = 2*fk[:,:,2:end-2].*(k(3)[:,:,2:end].^2)./(k(3)[:,:,2:end]+2.)
 
     df_hat = zeros(eltype(fk), N,N,N)
     df_hat[:,:,1] = fk_1[:,:,1]
-    df_hat[:,:,2:end-2] = fk_1[:,:,2:end] - cat(3, 0.0, fk_2[:,:,1:end-1])
+    df_hat[:,:,2:end-2] = fk_1[:,:,2:end] - cat(3, zeros(N,N), fk_2[:,:,1:end-1])
     df_hat[:,:,end-1] = -fk_2[:,:,end]
     df = ifct(F, df_hat, df)
     return df
@@ -339,6 +317,9 @@ type Robin <: SpecTransf
     k::Array{Float64, 1}
     ak::Array{Float64, 1}
     bk::Array{Float64, 1}
+    K::Array{Float64, 4}
+    aK::Array{Float64, 3}
+    bK::Array{Float64, 3}
     k1::Array{Float64, 1}
     ak1::Array{Float64, 1}
     bk1::Array{Float64, 1}
@@ -349,21 +330,25 @@ type Robin <: SpecTransf
         phi_k = T_k + a_k*T_{k+1} + b_k*T_{k+2},
         satisfy the imposed Robin (mixed) boundary conditions for a unique set of {a_k, b_k}.
         """
+        K = wavenumbers3D(N)
         k = collect(0:N-3)
         k1 = collect(0:N-2)
         if BC == "ND"
-            ak = -4*(k+1)./((k+1).^2 .+ (k+2).^2)
-            ak1 = -4*(k1+1)./((k1+1).^2 .+ (k1+2).^2)
+            aK  = -4*(K(3)+1.)./((K(3)+1.).^2 + (K(3)+2.).^2)
+            ak  = -4*(k+1.)./((k+1.).^2 + (k+2.).^2)
+            ak1 = -4*(k1+1.)./((k1+1.).^2 + (k1+2.).^2)
         elseif BC == "DN"
-            ak = 4*(k+1)./((k+1).^2 .+ (k+2).^2)
-            ak1 = 4*(k1+1)./((k1+1).^2 .+ (k1+2).^2)
+            aK  = 4*(K(3)+1.)./((K(3)+1.).^2 + (K(3)+2.).^2)
+            ak  = 4*(k+1.)./((k+1.).^2 + (k+2.).^2)
+            ak1 = 4*(k1+1.)./((k1+1.).^2 + (k1+2.).^2)
         end
-        bk = -((k.^2 + (k+1).^2)./((k+1).^2 .+ (k+2).^2))
-        bk1 = -((k1.^2 + (k1+1).^2)./((k1+1).^2 .+ (k1+2).^2))
-        new(axis, quad, BC, N, k, ak, bk, k1, ak1, bk1)
+        bK = -((K(3).^2 + (K(3)+1.).^2)./((K(3)+1.).^2 + (K(3)+2.).^2))
+        bk = -((k.^2 + (k+1.).^2)./((k+1.).^2 + (k+2.).^2))
+        bk1 = -((k1.^2 + (k1+1.).^2)./((k1+1.).^2 .+ (k1+2.).^2))
+        new(axis, quad, BC, N, k, ak, bk, K, aK, bK, k1, ak1, bk1)
     end
 end
-function fastShenScalar{T<:Real}(F::Robin, fj::Array{T, 1}, fk::Array{T, 1})
+function fastShenScalar(F::Robin, fj, fk)
     """Fast Shen scalar product
     B u_hat = sum_{j=0}{N} u_j phi_k(x_j) w_j,
     for Shen basis functions given by
@@ -371,34 +356,33 @@ function fastShenScalar{T<:Real}(F::Robin, fj::Array{T, 1}, fk::Array{T, 1})
     """
     fk = fastChebScalar(F, fj)
     fk_tmp = fk
-    fk[1:end-2] = fk_tmp[1:end-2] + (F.ak).*fk_tmp[2:end-1] + (F.bk).*fk_tmp[3:end]
+    fk[:,:,1:end-2] = fk_tmp[:,:,1:end-2] + (F.aK).*fk_tmp[:,:,2:end-1] + (F.bK).*fk_tmp[:,:,3:end]
     return fk
 end
-function ifst{T<:Real}(F::Robin, fk::Array{T, 1}, fj::Array{T, 1})
+function ifst(F::Robin, fk, fj)
     """Fast inverse Shen scalar transform for Robin BC.
     """
-    w_hat = zeros(eltype(fk), length(fk))
-    w_hat[1:end-2] = fk[1:end-2]
-    w_hat[2:end-1] += (F.ak).*fk[1:end-2]
-    w_hat[3:end]   += (F.bk).*fk[1:end-2]
+    w_hat = zeros(eltype(fk), size(fk))
+    w_hat[:,:,1:end-2] = fk[:,:,1:end-2]
+    w_hat[:,:,2:end-1] += (F.aK).*fk[:,:,1:end-2]
+    w_hat[:,:,3:end]   += (F.bK).*fk[:,:,1:end-2]
     fj = ifct(F, w_hat, fj)
     return fj
 end
-function fst{T<:Real}(F::Robin, fj::Array{T, 1}, fk::Array{T, 1})
+function fst(F::Robin, fj, fk)
     """Fast Shen transform for Robin BC.
     """
     fk = fastShenScalar(F, fj, fk)
-    N = length(fj)
+    N = last(size(fj))
     if F.quad == "GL"
-        ck = ones(eltype(fj), N-2); ck[1] = 2
+        ck = ones(eltype(fj), N-2); ck[1] = 2.
     elseif F.quad == "GC"
-        ck = ones(eltype(fj), N-2); ck[1] = 2; ck[end] = 2
+        ck = ones(eltype(fj), N-2); ck[1] = 2.; ck[end] = 2.
     end
-    a = (pi/2)*(ck .+ (F.ak).^2 .+ (F.bk).^2)
-    b = (pi/2)*ones(eltype(fj), N-3).*((F.ak)[1:end-1] .+ (F.ak1[2:end-1]).*(F.bk[1:end-1]))
-    c = (pi/2)*ones(eltype(fj), N-4).*(F.bk[1:end-2])
-
-    fk[1:end-2] = SymmetricalPDMA_1D(a, b, c, fk[1:end-2])
+    a = (pi/2.)*(ck + (F.ak).^2 + (F.bk).^2)
+    b = (pi/2.)*ones(eltype(fj), N-3).*((F.ak)[1:end-1] .+ (F.ak1[2:end-1]).*(F.bk[1:end-1]))
+    c = (pi/2.)*ones(eltype(fj), N-4).*(F.bk[1:end-2])
+    fk[:,:,1:end-2] = SymmetricalPDMA_3D(a, b, c, fk[:,:,1:end-2])
     return fk
 end
 #----------------------ooo----------------------------
@@ -411,58 +395,66 @@ type Biharmonic <: SpecTransf
     BiharmonicBC::ASCIIString
     N::Int64
     k::Array{Float64, 1}
-    factor1::Array{Float64, 1}
-    factor2::Array{Float64, 1}
+    K::Array{Float64, 4}
+    ak::Array{Float64, 1}
+    bk::Array{Float64, 1}
+    aK::Array{Float64, 3}
+    bK::Array{Float64, 3}
 
     function Biharmonic(axis, quad, BiharmonicBC, N)
         k = collect(0:N-5)
+        K = Biharmonicwavenumbers3D(N)
         if BiharmonicBC == "NB"
-            factor1 = -2*(k.^2)./((k+2).*(k+3))
-            factor2 = (k.^2).*(k+1)./((k+3).*(k+4).^2)
+            ak = -2*(k.^2)./((k+2).*(k+3))
+            bk = (k.^2).*(k+1)./((k+3).*(k+4).^2)
+            aK = -2*(K(3).^2)./((K(3)+2.).*(K(3)+3.))
+            bK = (K(3).^2).*(K(3)+1.)./((K(3)+3.).*(K(3)+4.).^2)
         elseif BiharmonicBC == "DB"
-            factor1 = -2*(k+2)./(k+3)
-            factor2 = (k+1)./(k+3)
+            ak = -2*(k+2)./(k+3)
+            bk = (k+1)./(k+3)
+            aK = -2*(K(3)+2.)./(K(3)+3.)
+            bK = (K(3)+1.)./(K(3)+3.)
         end
-        new(axis, quad, BiharmonicBC, N, k, factor1, factor2)
+        new(axis, quad, BiharmonicBC, N, k, K, ak, bk, aK, bK)
     end
 end
-function fastShenScalar{T<:Real}(F::Biharmonic, fj::Array{T, 1}, fk::Array{T, 1})
+function fastShenScalar(F::Biharmonic, fj, fk)
     """Fast Shen scalar product.
     """
     Tk = fk
     Tk = fastChebScalar(F, fj)
     fk[:] = Tk
-    fk[1:end-4] += F.factor1.*Tk[3:end-2]
-    fk[1:end-4] += F.factor2.*Tk[5:end]
-    fk[end-3:end] = 0.0
+    fk[:,:,1:end-4] += F.aK.*Tk[:,:,3:end-2]
+    fk[:,:,1:end-4] += F.bK.*Tk[:,:,5:end]
+    fk[:,:,end-3:end] = 0.0
     return fk
 end
-function ifst{T<:Real}(F::Biharmonic, fk::Array{T, 1}, fj::Array{T, 1})
+function ifst(F::Biharmonic, fk, fj)
     """Fast inverse Shen scalar transform
     """
-    w_hat = zeros(eltype(fk), length(fk))
-    w_hat[1:end-4] = fk[1:end-4]
-    w_hat[3:end-2] += F.factor1.*fk[1:end-4]
-    w_hat[5:end]   += F.factor2.*fk[1:end-4]
+    w_hat = zeros(eltype(fk), size(fk))
+    w_hat[:,:,1:end-4] = fk[:,:,1:end-4]
+    w_hat[:,:,3:end-2] += F.aK.*fk[:,:,1:end-4]
+    w_hat[:,:,5:end]   += F.bK.*fk[:,:,1:end-4]
     fj = ifct(F, w_hat, fj)
     return fj
 end
-function fst{T<:Real}(F::Biharmonic, fj::Array{T, 1}, fk::Array{T, 1})
+function fst(F::Biharmonic, fj, fk)
     """Fast Shen transform .
     """
     fk = fastShenScalar(F, fj, fk)
-    N = length(fj)
+    N = last(size(fj))
     N -= 4
     if F.quad == "GL"
         ck = ones(N); ck[1] = 2
     elseif F.quad == "GC"
         ck = ones(N); ck[1] = 2; ck[end] = 2
     end
-    c = (ck + F.factor1.^2 + F.factor2.^2)*pi/2.
-    d = (F.factor1[1:end-2] + F.factor1[3:end].*F.factor2[1:end-2])*pi/2.
-    e = F.factor2[1:end-4]*pi/2.
+    c = (ck + F.ak.^2 + F.bk.^2)*pi/2.
+    d = (F.ak[1:end-2] + F.ak[3:end].*F.bk[1:end-2])*pi/2.
+    e = F.bk[1:end-4]*pi/2.
 
-    fk[1:end-4] = PDMA_Symsolve(c, d, e,fk[1:end-4])
+    fk[:,:,1:end-4] = PDMA_Symsolve3D(c, d, e,fk[:,:,1:end-4])
     return fk
 end
 #----------------------ooo----------------------------
@@ -578,41 +570,58 @@ function tests(N)
         U_hat[view(3)...] = fst(F, U(3), U_hat(3));
         V[view(3)...]  = ifst(F, U_hat(3), V(3));
         @test isapprox(U(3), V(3))
+
+        U_hat[view(3)...] = 1.0-X(3).^2
+        V[view(3)...] = 0.0
+        V[view(3)...] = fastShenDerivative(F, U(3), V(3))
+        @test isapprox(U_hat(3), V(3))
         println("Test: Neumann transform for ", quad, " succeeded.")
     end
-    # # Robin
-    # for BC in ["ND", "DN"]
-    #     for quad in ["GL", "GC"]
-    #         F = Robin(axis, quad, BC, N)
-    #         x, w = nodesWeights(F, x, w)
-    #         if BC == "ND"
-    #             U = x-(8./13.)*(-1. + 2*x.^2) - (5./13.)*(-3*x + 4*x.^3);
-    #         elseif BC == "DN"
-    #             U = x + (8./13.)*(-1. + 2.*x.^2) - (5./13.)*(-3*x + 4*x.^3);
-    #         end
-    #         U_hat = fst(F, U, U_hat)
-    #         V = ifst(F, U_hat, V)
-    #         @test isapprox(U, V)
-    #         println("Test: Robin transform for ", BC,"  ",  quad, " succeeded.")
-    #     end
-    # end
-    # # Biharmonic
-    # for BiharmonicBC in ["DB", "NB"]
-    #     for quad in ["GL", "GC"]
-    #         F = Biharmonic(axis, quad, BiharmonicBC, N)
-    #         x, w = nodesWeights(F, x, w)
-    #         if BiharmonicBC == "DB"
-    #             U = x -(3./2.)*(4.*x.^3 - 3.*x)+(1./2.)*(16.*x.^5 -20.*x.^3 +5.*x)
-    #         elseif BiharmonicBC == "NB"
-    #             U = -1. + 2.*x.^2 - (2./5.)*(1. - 8.*x.^2 + 8.*x.^4) +
-    #             (1./15.)*(-1. + 18.*x.^2 - 48.*x.^4 + 32.*x.^6)
-    #         end
-    #         U_hat = fst(F, U, U_hat)
-    #         V = ifst(F, U_hat, V)
-    #         @test isapprox(U, V)
-    #         println("Test: Biharmonic transform for  ", BiharmonicBC, "  ", quad, " succeeded.")
-    #     end
-    # end
+    # Robin
+    for BC in ["ND", "DN"]
+        for quad in ["GL", "GC"]
+            F = Robin(axis, quad, BC, N)
+            z, w = nodesWeights(F, z, w)
+            x = collect(0:N-1)*2*pi/N
+            X = Array{Float64}(N, N, N,3)
+            for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
+            U, V, U_hat = similar(X),  similar(X),  similar(X)
+            U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
+            U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
+            if BC == "ND"
+                U[view(3)...] = X(3) - (8./13.)*(-1. + 2.*X(3).^2) - (5./13.)*(-3*X(3) + 4*X(3).^3)
+            elseif BC == "DN"
+                U[view(3)...] = X(3) + (8./13.)*(-1. + 2.*X(3).^2) - (5./13.)*(-3*X(3) + 4*X(3).^3)
+            end
+            U_hat[view(3)...] = fst(F, U(3), U_hat(3));
+            V[view(3)...]  = ifst(F, U_hat(3), V(3));
+            @test isapprox(U(3), V(3))
+            println("Test: Robin transform for ", BC,"  ",  quad, " succeeded.")
+        end
+    end
+    # Biharmonic
+    for BiharmonicBC in ["DB", "NB"]
+        for quad in ["GL", "GC"]
+            F = Biharmonic(axis, quad, BiharmonicBC, N)
+            z, w = nodesWeights(F, z, w)
+            x = collect(0:N-1)*2*pi/N
+            X = Array{Float64}(N, N, N,3)
+            for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
+            U, V, U_hat = similar(X),  similar(X),  similar(X)
+            U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
+            U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
+            if BiharmonicBC == "DB"
+                U[view(3)...] = X(3) -(3./2.)*(4.*X(3).^3 - 3.*X(3))+(1./2.)*(16.*X(3).^5 -20.*X(3).^3 +5.*X(3))
+            elseif BiharmonicBC == "NB"
+                U[view(3)...] = -1. + 2.*X(3).^2 - (2./5.)*(1. - 8.*X(3).^2 + 8.*X(3).^4) +
+                (1./15.)*(-1. + 18.*X(3).^2 - 48.*X(3).^4 + 32.*X(3).^6)
+            end
+            U_hat[view(3)...] = fst(F, U(3), U_hat(3));
+            V[view(3)...]  = ifst(F, U_hat(3), V(3));
+            @test isapprox(U(3), V(3))
+            println("Test: Biharmonic transform for  ", BiharmonicBC, "  ", quad, " succeeded.")
+        end
+    end
 end
 
 n = 2^3;
