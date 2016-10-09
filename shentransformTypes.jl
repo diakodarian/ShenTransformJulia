@@ -165,7 +165,7 @@ typealias BiharmGL Biharmonic{GL}
 typealias BiharmGC Biharmonic{GC}
 
 #-------------------------------------------------------------------------------
-#   Nodes and weights 
+#   Nodes and weights
 #-------------------------------------------------------------------------------
 function NodesWeights{T<:Real}(::SpecTGL, x::Vector{T}, w::Vector{T})
     N = length(x)
@@ -424,6 +424,7 @@ end
             df_hat = zeros(eltype(fk), t.N)
             df_hat[1:end-2] = fk_1 + fk_2[1:end-1]
             df_hat[end-1] = fk_2[end]
+
             ifct(t, df_hat, df)
         end
     elseif t == BiharmGL || t == BiharmGC

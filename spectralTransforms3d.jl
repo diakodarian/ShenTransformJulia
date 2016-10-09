@@ -89,7 +89,7 @@ type Chebyshev <: SpecTransf
     axis::Int64
     quad::ASCIIString
 end
-function fastChebScalar{T<:SpecTransf}(F::T, fj)
+function fastChebScalar{T<:SpecTransf, S<:Real}(F::T, fj::AbstractArray{S, 3})
     # Fast Chebyshev scalar product.
     N = last(size(fj))
     if F.quad == "GC"
@@ -98,7 +98,7 @@ function fastChebScalar{T<:SpecTransf}(F::T, fj)
         return dct(fj, 1, F.axis)*pi/(2.*(N-1))
     end
 end
-function fct{T<:SpecTransf}(F::T, fj, fk)
+function fct{T<:SpecTransf, S<:Real, R<:Real}(F::T, fj::AbstractArray{S, 3}, fk::AbstractArray{R, 3})
     # Fast Chebyshev transform.
     N = last(size(fj))
     if F.quad == "GC"
@@ -112,7 +112,7 @@ function fct{T<:SpecTransf}(F::T, fj, fk)
     end
     return fk
 end
-function ifct{T<:SpecTransf}(F::T, fk, fj)
+function ifct{T<:SpecTransf, S<:Real, R<:Real}(F::T, fk::AbstractArray{S, 3}, fj::AbstractArray{R, 3})
     # Inverse fast Chebyshev transform.
     if F.quad == "GC"
         fj = 0.5*dct(fk, 3, F.axis)
@@ -130,7 +130,7 @@ function ifct{T<:SpecTransf}(F::T, fk, fj)
     end
     return fj
 end
-function chebDerivativeCoefficients{T<:SpecTransf}(F::T, fk, fl)
+function chebDerivativeCoefficients{T<:SpecTransf, S<:Real, R<:Real}(F::T, fk::AbstractArray{S, 3}, fl::AbstractArray{R, 3})
     N = length(fk)
     fl[end] = 0.0
     fl[end-1] = 2*(N-1)*fk[end]
@@ -140,7 +140,7 @@ function chebDerivativeCoefficients{T<:SpecTransf}(F::T, fk, fl)
     fl[1] = fk[2] + 0.5*fl[3]
     return fl
 end
-function chebDerivativeCoefficients_3D{T<:SpecTransf}(F::T, fk, fl)
+function chebDerivativeCoefficients_3D{T<:SpecTransf, S<:Real, R<:Real}(F::T, fk::AbstractArray{S, 3}, fl::AbstractArray{R, 3})
     for i in 1:size(fk,1)
         for j in 1:size(fk,2)
             fl[i,j,1:end] = chebDerivativeCoefficients(F, fk[i,j,1:end], fl[i,j,1:end])
@@ -148,7 +148,7 @@ function chebDerivativeCoefficients_3D{T<:SpecTransf}(F::T, fk, fl)
     end
     return fl
 end
-function fastChebDerivative(F::Chebyshev, fj, fd)
+function fastChebDerivative{S<:Real, R<:Real}(F::Chebyshev, fj::AbstractArray{S, 3}, fd::AbstractArray{R, 3})
     # Compute derivative of fj at the same points.
     fk = similar(fj)
     fkd = similar(fj)
@@ -166,12 +166,12 @@ type Dirichlet <: SpecTransf
     quad::ASCIIString
 end
 
-function fastShenScalar(F::Dirichlet, fj, fk)
+function fastShenScalar{S<:Real}(F::Dirichlet, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
     fk = fastChebScalar(F, fj)
     fk[:,:,1:end-2] -= fk[:,:,3:end]
     return fk
 end
-function ifst(F::Dirichlet, fk, fj)
+function ifst{S<:Real}(F::Dirichlet, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 3})
     """Fast inverse Shen transform
     Transform needs to take into account that phi_k = T_k - T_{k+2}
     fk contains Shen coefficients in the first fk.shape[0]-2 positions
@@ -190,7 +190,7 @@ function ifst(F::Dirichlet, fk, fj)
     fj = ifct(F, w_hat, fj)
     return fj
 end
-function fst(F::Dirichlet, fj, fk)
+function fst{S<:Real}(F::Dirichlet, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
     """Fast Shen transform
     """
     fk = fastShenScalar(F, fj, fk)
@@ -211,7 +211,7 @@ function fst(F::Dirichlet, fj, fk)
     end
     return fk
 end
-function fastShenDerivative(F::Dirichlet, fj, df)
+function fastShenDerivative{S<:Real}(F::Dirichlet, fj::AbstractArray{S, 3}, df::AbstractArray{S, 3})
     """
     Fast derivative of fj using Shen Dirichlet basis
     """
@@ -239,7 +239,7 @@ type Neumann <: SpecTransf
     quad::ASCIIString
 end
 
-function fastShenScalar(F::Neumann, fj, fk)
+function fastShenScalar{S<:Real}(F::Neumann, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
     """Fast Shen scalar product.
     Chebyshev transform taking into account that phi_k = T_k - (k/(k+2))**2*T_{k+2}
     Note, this is the non-normalized scalar product
@@ -249,7 +249,7 @@ function fastShenScalar(F::Neumann, fj, fk)
     fk[:,:,1:end-2] -= (fk[:,:,3:end]).*((k(3)./(k(3)+2.)).^2)
     return fk
 end
-function ifst(F::Neumann, fk, fj)
+function ifst{S<:Real}(F::Neumann, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 3})
     """Fast inverse Shen scalar transform
     """
     if length(size(fk))==3
@@ -266,7 +266,7 @@ function ifst(F::Neumann, fk, fj)
     fj = ifct(F, w_hat, fj)
     return fj
 end
-function fst(F::Neumann, fj, fk)
+function fst{S<:Real}(F::Neumann, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
     """Fast Shen transform.
     """
     fk = fastShenScalar(F, fj, fk)
@@ -284,7 +284,7 @@ function fst(F::Neumann, fj, fk)
     end
     return fk
 end
-function fastShenDerivative(F::Neumann, fj, df)
+function fastShenDerivative{S<:Real}(F::Neumann, fj::AbstractArray{S, 3}, df::AbstractArray{S, 3})
     """
     Fast derivative of fj using Shen Neumann basis
     """
@@ -348,7 +348,7 @@ type Robin <: SpecTransf
         new(axis, quad, BC, N, k, ak, bk, K, aK, bK, k1, ak1, bk1)
     end
 end
-function fastShenScalar(F::Robin, fj, fk)
+function fastShenScalar{S<:Real}(F::Robin, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
     """Fast Shen scalar product
     B u_hat = sum_{j=0}{N} u_j phi_k(x_j) w_j,
     for Shen basis functions given by
@@ -359,7 +359,7 @@ function fastShenScalar(F::Robin, fj, fk)
     fk[:,:,1:end-2] = fk_tmp[:,:,1:end-2] + (F.aK).*fk_tmp[:,:,2:end-1] + (F.bK).*fk_tmp[:,:,3:end]
     return fk
 end
-function ifst(F::Robin, fk, fj)
+function ifst{S<:Real}(F::Robin, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 3})
     """Fast inverse Shen scalar transform for Robin BC.
     """
     w_hat = zeros(eltype(fk), size(fk))
@@ -369,7 +369,7 @@ function ifst(F::Robin, fk, fj)
     fj = ifct(F, w_hat, fj)
     return fj
 end
-function fst(F::Robin, fj, fk)
+function fst{S<:Real}(F::Robin, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
     """Fast Shen transform for Robin BC.
     """
     fk = fastShenScalar(F, fj, fk)
@@ -418,7 +418,7 @@ type Biharmonic <: SpecTransf
         new(axis, quad, BiharmonicBC, N, k, K, ak, bk, aK, bK)
     end
 end
-function fastShenScalar(F::Biharmonic, fj, fk)
+function fastShenScalar{S<:Real}(F::Biharmonic, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
     """Fast Shen scalar product.
     """
     Tk = fk
@@ -429,7 +429,7 @@ function fastShenScalar(F::Biharmonic, fj, fk)
     fk[:,:,end-3:end] = 0.0
     return fk
 end
-function ifst(F::Biharmonic, fk, fj)
+function ifst{S<:Real}(F::Biharmonic, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 3})
     """Fast inverse Shen scalar transform
     """
     w_hat = zeros(eltype(fk), size(fk))
@@ -439,7 +439,7 @@ function ifst(F::Biharmonic, fk, fj)
     fj = ifct(F, w_hat, fj)
     return fj
 end
-function fst(F::Biharmonic, fj, fk)
+function fst{S<:Real}(F::Biharmonic, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
     """Fast Shen transform .
     """
     fk = fastShenScalar(F, fj, fk)
@@ -520,13 +520,15 @@ function tests(N)
         x = collect(0:N-1)*2*pi/N
         X = Array{Float64}(N, N, N,3)
         for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
-        U, V, U_hat = similar(X),  similar(X),  similar(X)
+        U = similar(X)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
         U[view(3)...] = 1. - X(3).^2
+        V, U_hat = similar(U),  similar(U)
 
         U_hat[view(3)...] = fct(F, U(3), U_hat(3));
         V[view(3)...]  = ifct(F, U_hat(3), V(3));
+
         @test isapprox(U(3), V(3))
         U_hat[view(3)...] = -2.*X(3)
         V[view(3)...] = fastChebDerivative(F, U(3), V(3))
@@ -540,11 +542,11 @@ function tests(N)
         x = collect(0:N-1)*2*pi/N
         X = Array{Float64}(N, N, N,3)
         for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
-        U, V, U_hat = similar(X),  similar(X),  similar(X)
+        U = similar(X)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
         U[view(3)...] = 1. - X(3).^2
-
+        V, U_hat = similar(U),  similar(U)
         U_hat[view(3)...] = fst(F, U(3), U_hat(3));
         V[view(3)...]  = ifst(F, U_hat(3), V(3));
         @test isapprox(U(3), V(3))
