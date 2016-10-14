@@ -2,23 +2,26 @@ include("TDMA.jl")
 include("PDMA.jl")
 using TDMA
 using PDMA
+import MPI
 #-----------------------------------------------------
 #      Functions needed for all transforms
 #-----------------------------------------------------
 function wavenumbers3D{T<:Int}(N::T)
+    Nh = N÷2+1
     ky = fftfreq(N, 1./N)
-    #kz = kx[1:(N÷2+1)]; kz[end] *= -1
+    kz = ky[1:(N÷2+1)]; kz[end] *= -1
     kx = collect(Float64, 0:N-3)
-    K = Array{Float64}(N, N, N-2, 3)
-    for (i, Ki) in enumerate(ndgrid(ky, ky, kx)) K[view(i)...] = Ki end
+    K = Array{Float64}(Nh, N, N-2, 3)
+    for (i, Ki) in enumerate(ndgrid(kz, ky, kx)) K[view(i)...] = Ki end
     return K
 end
 function Biharmonicwavenumbers3D{T<:Int}(N::T)
+    Nh = N÷2+1
     ky = fftfreq(N, 1./N)
-    #kz = kx[1:(N÷2+1)]; kz[end] *= -1
+    kz = ky[1:(N÷2+1)]; kz[end] *= -1
     kx = collect(Float64, 0:N-5)
-    K = Array{Float64}(N, N, N-4, 3)
-    for (i, Ki) in enumerate(ndgrid(ky, ky, kx)) K[view(i)...] = Ki end
+    K = Array{Float64}(Nh, N, N-4, 3)
+    for (i, Ki) in enumerate(ndgrid(kz, ky, kx)) K[view(i)...] = Ki end
     return K
 end
 #-------------------------------------------------------------------------------
@@ -40,7 +43,7 @@ end
     dct_lookup = Dict(1 => FFTW.REDFT00, 2 => FFTW.REDFT10, 3 => FFTW.REDFT01, 4 => FFTW.REDFT11)
     fftw = dct_lookup[N]
     quote
-        FFTW.r2r(real(x), $(fftw), (t.axis, )) + FFTW.r2r(imag(x), $(fftw), (t.axis, ))*one(T)
+        FFTW.r2r(real(x), $(fftw), (t.axis, )) + FFTW.r2r(imag(x), $(fftw), (t.axis, ))*Complex{T}(im)
     end
 end
 #-------------------------------------------------------------------------------
@@ -228,12 +231,12 @@ end
 #-------------------------------------------------------------------------------
 #   Chebyshev scalar product
 #-------------------------------------------------------------------------------
-function fastChebScalar{S<:Real}(::SpecTGC, fj::AbstractArray{S, 3})
+function fastChebScalar{S<:Real}(::SpecTGC, fj::AbstractArray{Complex{S}, 3})
     F = DctType{2}(3)
     N = last(size(fj))
     dct(F, fj)*pi/(2.*N)
 end
-function fastChebScalar{S<:Real}(::SpecTGL, fj::AbstractArray{S, 3})
+function fastChebScalar{S<:Real}(::SpecTGL, fj::AbstractArray{Complex{S}, 3})
     F = DctType{1}(3)
     N = last(size(fj))
     dct(F, fj)*pi/(2.*(N-1))
@@ -241,14 +244,14 @@ end
 #-------------------------------------------------------------------------------
 #    Forward Chebyshev transform
 #-------------------------------------------------------------------------------
-function fct{S<:Real}(::SpecTGC, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
+function fct{S<:Real}(::SpecTGC, fj::AbstractArray{Complex{S}}, fk::AbstractArray{Complex{S}})
     F = DctType{2}(3)
     N = last(size(fj))
     fk = dct(F, fj)/N
     fk[:,:,1] /= 2.
     fk
 end
-function fct{S<:Real}(::SpecTGL, fj::AbstractArray{S, 3}, fk::AbstractArray{S, 3})
+function fct{S<:Real}(::SpecTGL, fj::AbstractArray{Complex{S}, 3}, fk::AbstractArray{Complex{S}, 3})
     F = DctType{1}(3)
     N = last(size(fj))
     fk = dct(F, fj)/(N-1)
@@ -259,7 +262,7 @@ end
 #-------------------------------------------------------------------------------
 #   Backward Chebyshev transform
 #-------------------------------------------------------------------------------
-function ifct{S<:Real}(::SpecTGC, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 3})
+function ifct{S<:Real}(::SpecTGC, fk::AbstractArray{Complex{S}, 3}, fj::AbstractArray{Complex{S}, 3})
     F = DctType{3}(3)
     fj = 0.5*dct(F, fk)
     for i in 1:last(size(fj))
@@ -267,7 +270,7 @@ function ifct{S<:Real}(::SpecTGC, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 
     end
     fj
 end
-function ifct{S<:Real}(::SpecTGL, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 3})
+function ifct{S<:Real}(::SpecTGL, fk::AbstractArray{Complex{S}, 3}, fj::AbstractArray{Complex{S}, 3})
     F = DctType{1}(3)
     fj = 0.5*dct(F, fk)
     for i in 1:last(size(fj))
@@ -315,7 +318,7 @@ end
 #-------------------------------------------------------------------------------
 #     Shen scalar product
 #-------------------------------------------------------------------------------
-@generated function fastShenScalar{T<:Real}(t::SpecTransf, fj::AbstractArray{T, 3}, fk::AbstractArray{T, 3})
+@generated function fastShenScalar{T<:Real}(t::SpecTransf, fj::AbstractArray{Complex{T}, 3}, fk::AbstractArray{Complex{T}, 3})
     if t == DirGL || t == DirGC
         quote
             fk = fastChebScalar(t, fj)
@@ -350,7 +353,7 @@ end
 #-------------------------------------------------------------------------------
 #   ifst - Backward Shen transform
 #-------------------------------------------------------------------------------
-@generated function ifst{T<:Real}(t::SpecTransf, fk::AbstractArray{T, 3}, fj::AbstractArray{T, 3})
+@generated function ifst{T<:Real}(t::SpecTransf, fk::AbstractArray{Complex{T}, 3}, fj::AbstractArray{Complex{T}, 3})
     if t == DirGL || t == DirGC
         quote
             w_hat = zeros(eltype(fk), size(fk))
@@ -386,7 +389,7 @@ end
 #-------------------------------------------------------------------------------
 #   fst - Forward Shen transform
 #-------------------------------------------------------------------------------
-@generated function fst{T<:Real}(t::SpecTransf, fj::AbstractArray{T, 3}, fk::AbstractArray{T, 3})
+@generated function fst{T<:Real}(t::SpecTransf, fj::AbstractArray{Complex{T}, 3}, fk::AbstractArray{Complex{T}, 3})
     if t == DirGC || t == DirGL
         quote
             fk = fastShenScalar(t, fj, fk)
@@ -517,6 +520,132 @@ end
         end
     end
 end
+
+#-------------------------------------------------------------------------------
+#   Spectral transforms
+#-------------------------------------------------------------------------------
+type r2c{T<:SpecTransf, S<:Real}
+    N::Int64
+    plan12::FFTW.rFFTWPlan{S}
+    vT::Array{Complex{S}, 3}
+    v::Array{Complex{S}, 3}
+
+    function r2c(N)
+        Nh = N÷2+1
+        A = zeros(S, (N, N, N))
+        plan12 = plan_rfft(A, (1, 2))
+        vT, v = Array{Complex{S}}(Nh, N, N), Array{Complex{S}}(Nh, N, N)
+        inv(plan12)
+        new(N, plan12, vT, v)
+    end
+end
+
+@generated function FCS{S<:SpecTransf, T<:Real}(F::r2c{S, T}, u::AbstractArray{T}, fu::AbstractArray{Complex{T}, 3})
+    node = [Chebyshev{GL}(), Chebyshev{GC}()]
+    if r2c{S, T} == r2c{SpecTransf{GL}, Float64}
+        t = node[1]
+    elseif r2c{S, T} == r2c{SpecTransf{GC}, Float64}
+        t = node[2]
+    end
+    quote
+        A_mul_B!(F.vT, F.plan12, u)
+        fu = fastChebScalar($t, F.vT, fu)
+        fu
+    end
+end
+@generated function IFCT{S<:SpecTransf, T<:Real}(F::r2c{S, T}, fu::AbstractArray{Complex{T}}, u::AbstractArray{T})
+    node = [Chebyshev{GL}(), Chebyshev{GC}()]
+    if r2c{S, T} == r2c{SpecTransf{GL}, Float64}
+        t = node[1]
+    elseif r2c{S, T} == r2c{SpecTransf{GC}, Float64}
+        t = node[2]
+    end
+    quote
+        F.v = ifct($t, fu, F.v)
+        A_mul_B!(u, F.plan12.pinv, F.v)
+        u
+    end
+end
+@generated function FCT{S<:SpecTransf, T<:Real}(F::r2c{S, T}, u::AbstractArray{T}, fu::AbstractArray{Complex{T}})
+    node = [Chebyshev{GL}(), Chebyshev{GC}()]
+    if r2c{S, T} == r2c{SpecTransf{GL}, Float64}
+        t = node[1]
+    elseif r2c{S, T} == r2c{SpecTransf{GC}, Float64}
+        t = node[2]
+    end
+    quote
+        A_mul_B!(F.vT, F.plan12, u)
+        fu = fct($t, F.vT, fu)
+        fu
+    end
+end
+
+@generated function FSS{S<:SpecTransf, T<:Real}(F::r2c{S, T}, u::AbstractArray{T}, fu::AbstractArray{Complex{T}, 3})
+    node = [Dirichlet{GL}, Dirichlet{GC},
+            GeneralDirichlet{Gl}, GeneralDirichlet{GC},
+            Neumann{GL}, Neumann{GC}, Robin{GL}, Robin{GC},
+            Biharmonic{GL}, Biharmonic{GC}]
+    if r2c{S, T} == r2c{Dirichlet{GL}, Float64}
+        t = node[1](F.N)
+    elseif r2c{S, T} == r2c{Dirichlet{GC}, Float64}
+        t = node[2](F.N)
+    elseif r2c{S, T} == r2c{GeneralDirichlet{GL}, Float64}
+        t = node[3]
+    elseif r2c{S, T} == r2c{GeneralDirichlet{GC}, Float64}
+        t = node[4]
+    elseif r2c{S, T} == r2c{Neumann{GL}, Float64}
+        t = node[5]
+    elseif r2c{S, T} == r2c{Neumann{GC}, Float64}
+        t = node[6]
+    elseif r2c{S, T} == r2c{Robin{GL}, Float64}
+        t = node[7]
+    elseif r2c{S, T} == r2c{Robin{GC}, Float64}
+        t = node[8]
+    elseif r2c{S, T} == r2c{Biharmonic{GL}, Float64}
+        t = node[9]
+    elseif r2c{S, T} == r2c{Biharmonic{GC}, Float64}
+        t = node[10]
+    end
+    quote
+        A_mul_B!(F.vT, F.plan12, u)
+        fu = fastShenScalar($t, F.vT, fu)
+        fu
+    end
+end
+@generated function IFST{S<:SpecTransf, T<:Real}(F::r2c{S, T}, fu::AbstractArray{Complex{T}}, u::AbstractArray{T})
+    node = [Dirichlet{GL}, Dirichlet{GC}, Neumann{GL}, Neumann{GC}]
+    if r2c{S, T} == r2c{Dirichlet{GL}, Float64}
+        t = node[1]
+    elseif r2c{S, T} == r2c{Dirichlet{GC}, Float64}
+        t = node[2]
+    elseif r2c{S, T} == r2c{Neumann{GL}, Float64}
+        t = node[3]
+    elseif r2c{S, T} == r2c{Neumann{GC}, Float64}
+        t = node[4]
+    end
+    quote
+        F.v = ifst($t(F.N), fu, F.v)
+        A_mul_B!(u, F.plan12.pinv, F.v)
+        u
+    end
+end
+@generated function FST{S<:SpecTransf, T<:Real}(F::r2c{S, T}, u::AbstractArray{T}, fu::AbstractArray{Complex{T}})
+    node = [Dirichlet{GL}, Dirichlet{GC}, Neumann{GL}, Neumann{GC}]
+    if r2c{S, T} == r2c{Dirichlet{GL}, Float64}
+        t = node[1]
+    elseif r2c{S, T} == r2c{Dirichlet{GC}, Float64}
+        t = node[2]
+    elseif r2c{S, T} == r2c{Neumann{GL}, Float64}
+        t = node[3]
+    elseif r2c{S, T} == r2c{Neumann{GC}, Float64}
+        t = node[4]
+    end
+    quote
+        A_mul_B!(F.vT, F.plan12, u)
+        fu = fst($t(F.N), F.vT, fu)
+        fu
+    end
+end
 # ----------------------------------------------------------------------------
 using Base.Test
 using Compat
@@ -564,6 +693,9 @@ function ndgrid{T}(vs::AbstractVector{T}...)
     out
 end
 
+#-------------------------------------------------------------------------------
+#   Tests: Shen transforms
+#-------------------------------------------------------------------------------
 function tests(N)
     axis = 3
     z = zeros(Float64, N)
@@ -580,13 +712,13 @@ function tests(N)
         U = similar(X)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
-        U[view(3)...] = (1. - X(3).^2).*sin(X(1)).*cos(X(2))
+        U[view(3)...] = 1. - X(3).^2
         V, U_hat = similar(U),  similar(U)
 
         U_hat[view(3)...] = fct(F, U(3), U_hat(3));
         V[view(3)...]  = ifct(F, U_hat(3), V(3));
         @test isapprox(U(3), V(3))
-        U_hat[view(3)...] = -2.*X(3).*sin(X(1)).*cos(X(2))
+        U_hat[view(3)...] = -2.*X(3)
         V[view(3)...] = fastChebDerivative(F, U(3), V(3))
         @test isapprox(U_hat(3), V(3))
         println("Test: Chebyshev transform for ", F, " succeeded.")
@@ -600,13 +732,13 @@ function tests(N)
         U = similar(X)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
-        U[view(3)...] = (1. - X(3).^2).*sin(X(1)).*cos(X(2))
+        U[view(3)...] = 1. - X(3).^2
         V, U_hat = similar(U),  similar(U)
         U_hat[view(3)...] = fst(F, U(3), U_hat(3));
         V[view(3)...]  = ifst(F, U_hat(3), V(3));
         @test isapprox(U(3), V(3))
 
-        U_hat[view(3)...] = -2.*X(3).*sin(X(1)).*cos(X(2))
+        U_hat[view(3)...] = -2.*X(3)
         V[view(3)...] = 0.0
         V[view(3)...] = fastShenDerivative(F, U(3), V(3))
         @test isapprox(U_hat(3), V(3))
@@ -622,13 +754,13 @@ function tests(N)
         U = similar(X)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
-        U[view(3)...] = (-2.+10.*X(3).^2-8.*X(3).^4 +2.0*(-3.*X(3)+4.*X(3).^3)).*sin(X(1)).*cos(X(2))
+        U[view(3)...] = -2.+10.*X(3).^2-8.*X(3).^4 +2.0*(-3.*X(3)+4.*X(3).^3)
         V, U_hat = similar(U),  similar(U)
         U_hat[view(3)...] = fst(F, U(3), U_hat(3));
         V[view(3)...]  = ifst(F, U_hat(3), V(3));
         @test isapprox(U(3), V(3))
 
-        U_hat[view(3)...] = (20.*X(3)-32.*X(3).^3-6.0+24.*X(3).^2).*sin(X(1)).*cos(X(2))
+        U_hat[view(3)...] = 20.*X(3)-32.*X(3).^3-6.0+24.*X(3).^2
         V[view(3)...] = 0.0
         V[view(3)...] = fastShenDerivative(F, U(3), V(3))
         @test isapprox(U_hat(3), V(3))
@@ -644,13 +776,13 @@ function tests(N)
         U, V, U_hat = similar(X),  similar(X),  similar(X)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
-        U[view(3)...] = (X(3) -(1./3.)*X(3).^3).*sin(X(1)).*cos(X(2))
+        U[view(3)...] = X(3) -(1./3.)*X(3).^3
 
         U_hat[view(3)...] = fst(F, U(3), U_hat(3));
         V[view(3)...]  = ifst(F, U_hat(3), V(3));
         @test isapprox(U(3), V(3))
 
-        U_hat[view(3)...] = (1.0-X(3).^2).*sin(X(1)).*cos(X(2))
+        U_hat[view(3)...] = 1.0-X(3).^2
         V[view(3)...] = 0.0
         V[view(3)...] = fastShenDerivative(F, U(3), V(3))
         @test isapprox(U_hat(3), V(3))
@@ -668,18 +800,18 @@ function tests(N)
             U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
             U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
             if eval(BC) == "ND"
-                U[view(3)...] = (X(3)-(8./13.)*(-1. + 2*X(3).^2) - (5./13.)*(-3*X(3) + 4*X(3).^3)).*sin(X(1)).*cos(X(2));
+                U[view(3)...] = X(3)-(8./13.)*(-1. + 2*X(3).^2) - (5./13.)*(-3*X(3) + 4*X(3).^3);
             elseif eval(BC) == "DN"
-                U[view(3)...] = (X(3) + (8./13.)*(-1. + 2.*X(3).^2) - (5./13.)*(-3*X(3) + 4*X(3).^3)).*sin(X(1)).*cos(X(2));
+                U[view(3)...] = X(3) + (8./13.)*(-1. + 2.*X(3).^2) - (5./13.)*(-3*X(3) + 4*X(3).^3);
             end
             U_hat[view(3)...] = fst(F, U(3), U_hat(3));
             V[view(3)...]  = ifst(F, U_hat(3), V(3));
             @test isapprox(U(3), V(3))
 
             if eval(BC) == "ND"
-                U_hat[view(3)...] = ((28./13.) - (32./13.)*X(3) -(60./13.)*X(3).^2).*sin(X(1)).*cos(X(2));
+                U_hat[view(3)...] = (28./13.) - (32./13.)*X(3) -(60./13.)*X(3).^2;
             elseif eval(BC) == "DN"
-                U_hat[view(3)...] = ((28./13.) + (32./13.)*X(3) -(60./13.)*X(3).^2).*sin(X(1)).*cos(X(2));
+                U_hat[view(3)...] = (28./13.) + (32./13.)*X(3) -(60./13.)*X(3).^2;
             end
             V[view(3)...] = 0.0
             V[view(3)...] = fastShenDerivative(F, U(3), V(3))
@@ -700,19 +832,19 @@ function tests(N)
             U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
             U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
             if eval(BiharmonicBC) == "DB"
-                U[view(3)...] = (X(3) -(3./2.)*(4.*X(3).^3 - 3.*X(3))+(1./2.)*(16.*X(3).^5 -20.*X(3).^3 +5.*X(3))).*sin(X(1)).*cos(X(2))
+                U[view(3)...] = X(3) -(3./2.)*(4.*X(3).^3 - 3.*X(3))+(1./2.)*(16.*X(3).^5 -20.*X(3).^3 +5.*X(3))
             elseif eval(BiharmonicBC) == "NB"
-                U[view(3)...] = (-1. + 2.*X(3).^2 - (2./5.)*(1. - 8.*X(3).^2 + 8.*X(3).^4) +
-                (1./15.)*(-1. + 18.*X(3).^2 - 48.*X(3).^4 + 32.*X(3).^6)).*sin(X(1)).*cos(X(2))
+                U[view(3)...] = -1. + 2.*X(3).^2 - (2./5.)*(1. - 8.*X(3).^2 + 8.*X(3).^4) +
+                (1./15.)*(-1. + 18.*X(3).^2 - 48.*X(3).^4 + 32.*X(3).^6)
             end
             U_hat[view(3)...] = fst(F, U(3), U_hat(3));
             V[view(3)...]  = ifst(F, U_hat(3), V(3));
             @test isapprox(U(3), V(3))
 
             if eval(BiharmonicBC) == "DB"
-                U_hat[view(3)...] = (8. - 48.*X(3).^2 +40.*X(3).^4).*sin(X(1)).*cos(X(2))
+                U_hat[view(3)...] = 8. - 48.*X(3).^2 +40.*X(3).^4;
             elseif eval(BiharmonicBC) == "NB"
-                U_hat[view(3)...] = ((64./5.)*X(3) - (128./5.)*X(3).^3 +(64./5.)*X(3).^5).*sin(X(1)).*cos(X(2))
+                U_hat[view(3)...] = (64./5.)*X(3) - (128./5.)*X(3).^3 +(64./5.)*X(3).^5;
             end
             V[view(3)...] = 0.0
             V[view(3)...] = fastShenDerivative(F, U(3), V(3))
@@ -734,4 +866,86 @@ symbol1 = :BiharmBC1
 symbol2 = :BiharmBC2
 BiharmonicBCsymbols = [symbol1, symbol2]
 
-tests(N)
+#tests(N)
+
+function Spectraltests(N)
+    axis = 3
+    Nh = N÷2+1
+    z = zeros(Float64, N)
+    w = similar(z)
+    ff = ["GC", "GL"]
+    # Chebyshev
+    for (j, F) in enumerate([r2c{SpecTransf{GL}, Float64}, r2c{SpecTransf{GC}, Float64}])
+        if F == r2c{SpecTransf{GL}, Float64}
+            C = Chebyshev{GL}()
+            z, w = NodesWeights(C, z, w)
+        elseif  F == r2c{SpecTransf{GC}, Float64}
+            C = Chebyshev{GC}()
+            z, w = NodesWeights(C, z, w)
+        end
+        x = collect(0:N-1)*2*pi/N
+        X = Array{Float64}(N, N, N, 3)
+        for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
+        U = similar(X)
+        U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
+        U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
+        U[view(3)...] = (1. - X(3).^2).*sin(X(1))#.*cos(X(1))
+        V = similar(U)
+        U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
+
+        U_hat[view(3)...] = FCT(F(N), U(3), U_hat(3));
+        V[view(3)...]  = IFCT(F(N), U_hat(3), V(3));
+        @test isapprox(U(3), V(3))
+        println("Test: Chebyshev transform for ", ff[j], " succeeded.")
+    end
+    # Dirichlet
+    for (j, F) in enumerate([r2c{Dirichlet{GL}, Float64}, r2c{Dirichlet{GC}, Float64}])
+        if F == r2c{Dirichlet{GL}, Float64}
+            C = Dirichlet{GL}(N)
+            z, w = NodesWeights(C, z, w)
+        elseif  F == r2c{Dirichlet{GC}, Float64}
+            C = Dirichlet{GC}(N)
+            z, w = NodesWeights(C, z, w)
+        end
+        x = collect(0:N-1)*2*pi/N
+        X = Array{Float64}(N, N, N, 3)
+        for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
+        U = similar(X)
+        U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
+        U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
+        U[view(3)...] = (1. - X(3).^2).*sin(X(1))
+        V = similar(U)
+        U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
+
+        U_hat[view(3)...] = FST(F(N), U(3), U_hat(3));
+        V[view(3)...]  = IFST(F(N), U_hat(3), V(3));
+        @test isapprox(U(3), V(3))
+        println("Test: Dirichlet transform ", ff[j]," succeeded.")
+    end
+    # Neumann
+    for (j, F) in enumerate([r2c{Neumann{GL}, Float64}, r2c{Neumann{GC}, Float64}])
+        if F == r2c{Neumann{GL}, Float64}
+            C = Dirichlet{GL}(N)
+            z, w = NodesWeights(C, z, w)
+        elseif  F == r2c{Neumann{GC}, Float64}
+            C = Dirichlet{GC}(N)
+            z, w = NodesWeights(C, z, w)
+        end
+        x = collect(0:N-1)*2*pi/N
+        X = Array{Float64}(N, N, N, 3)
+        for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
+        U = similar(X)
+        U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
+        U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
+        U[view(3)...] = (X(3) - (1./3.)X(3).^3).*sin(X(1))
+        V = similar(U)
+        U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
+
+        U_hat[view(3)...] = FST(F(N), U(3), U_hat(3));
+        V[view(3)...]  = IFST(F(N), U_hat(3), V(3));
+        @test isapprox(U(3), V(3))
+        println("Test: Neumann transform ", ff[j]," succeeded.")
+    end
+end
+
+Spectraltests(N)
