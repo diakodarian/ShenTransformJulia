@@ -13,3 +13,4 @@ shentransform1d_1.jl
 typeTest.jl
 mk-typeTest.jl
 sandboxTypes.jl
+3Dtests.jl
