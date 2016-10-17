@@ -395,7 +395,7 @@ end
         quote
             fk = fastChebScalar(t, fj)
             fk_tmp = fk
-            fk[:,:,1:end-2] = fk_tmp[:,:,1:end-2] #+ (t.aK).*fk_tmp[:,:,2:end-1] + (t.bK).*fk_tmp[:,:,3:end]
+            fk[:,:,1:end-2] = fk_tmp[:,:,1:end-2] + (t.aK).*fk_tmp[:,:,2:end-1] + (t.bK).*fk_tmp[:,:,3:end]
             return fk
         end
     elseif t == BiharmGL || t == BiharmGC
