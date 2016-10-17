@@ -9,10 +9,10 @@ import MPI
 function wavenumbers3D{T<:Int}(N::T)
     Nh = N÷2+1
     ky = fftfreq(N, 1./N)
-    kz = ky[1:(N÷2+1)]; kz[end] *= -1
-    kx = collect(Float64, 0:N-3)
+    kx = ky[1:(N÷2+1)]; kx[end] *= -1
+    kz = collect(Float64, 0:N-3)
     K = Array{Float64}(Nh, N, N-2, 3)
-    for (i, Ki) in enumerate(ndgrid(kz, ky, kx)) K[view(i)...] = Ki end
+    for (i, Ki) in enumerate(ndgrid(kx, ky, kz)) K[view(i)...] = Ki end
     return K
 end
 function Biharmonicwavenumbers3D{T<:Int}(N::T)
@@ -59,54 +59,89 @@ type GC <: NodeType end
 abstract SpecTransf{T<:NodeType}
 type Chebyshev{T<:NodeType} <: SpecTransf{T} end
 type Dirichlet{T<:NodeType} <: SpecTransf{T}
-    N::Int64
-    k::Array{Float64, 4}
+    # Global shape
+    N::Array{Int, 1}
+    # Communicator
+    comm::MPI.Comm
+    num_processes::Int
+    rank::Int
+    k::Array{Int, 4}
     ck::Vector{Float64}
-    function Dirichlet(N)
-        k = wavenumbers3D(N)
+    function Dirichlet(N, comm)
+        num_processes = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+        kz = collect(Float64, 0:N[3]-3)
+        kx = rfftfreq(N[1], 1.0/N[1])
+        ky = fftfreq(N[2], 1.0/N[2])[rank*div(N[2], num_processes)+1:(rank+1)*div(N[2], num_processes)]
+        k = Array{Int}(tuple(push!([N[1]÷2+1, N[2]÷num_processes, N[3]-2], 3)...))
+        for (i, Ki) in enumerate(ndgrid(kx, ky, kz)) k[view(i)...] = Ki end
+
         if T == GL
-            ck = ones(eltype(Float64), N-2); ck[1] = 2; ck[end] = 2
+            ck = ones(eltype(Float64), N[3]-2); ck[1] = 2; ck[end] = 2
         elseif T == GC
-            ck = ones(eltype(Float64), N-2); ck[1] = 2
+            ck = ones(eltype(Float64), N[3]-2); ck[1] = 2
         end
-        new(N, k, ck)
+        new(N, comm, num_processes, rank, k, ck)
     end
 end
 type Neumann{T<:NodeType} <: SpecTransf{T}
-    N::Int64
+    # Global shape
+    N::Array{Int, 1}
+    # Communicator
+    comm::MPI.Comm
+    num_processes::Int
+    rank::Int
     k::Vector{Float64}
-    K::Array{Float64, 4}
+    K::Array{Int, 4}
     ck::Vector{Float64}
-    function Neumann(N)
-        k = collect(0:N-3)
-        K = wavenumbers3D(N)
+    function Neumann(N, comm)
+        num_processes = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+        k = collect(Float64, 0:N[3]-3)
+        kx = rfftfreq(N[1], 1.0/N[1])
+        ky = fftfreq(N[2], 1.0/N[2])[rank*div(N[2], num_processes)+1:(rank+1)*div(N[2], num_processes)]
+        K = Array{Int}(tuple(push!([N[1]÷2+1, N[2]÷num_processes, N[3]-2], 3)...))
+        for (i, Ki) in enumerate(ndgrid(kx, ky, k)) K[view(i)...] = Ki end
+
         if T == GL
-            ck = ones(eltype(Float64), N-3); ck[end] = 2
+            ck = ones(eltype(Float64), N[3]-3); ck[end] = 2
         elseif T == GC
-            ck = ones(eltype(Float64), N-3)
+            ck = ones(eltype(Float64), N[3]-3)
         end
-        new(N, k, K, ck)
+        new(N, comm, num_processes, rank, k, K, ck)
     end
 end
 type GeneralDirichlet{T<:NodeType} <: SpecTransf{T}
     a::Float64
     b::Float64
-    N::Int64
+    # Global shape
+    N::Array{Int, 1}
+    # Communicator
+    comm::MPI.Comm
+    num_processes::Int
+    rank::Int
     k::Vector{Float64}
     ck::Vector{Float64}
     ak::Vector{Float64}
     bk::Vector{Float64}
-    K::Array{Float64, 4}
+    K::Array{Int, 4}
     aK::Array{Float64, 3}
     bK::Array{Float64, 3}
     k1::Vector{Float64}
     ak1::Vector{Float64}
     bk1::Vector{Float64}
 
-    function GeneralDirichlet(a, b, N)
-        k = collect(0:N-3)
-        K = wavenumbers3D(N)
-        k1 = collect(0:N-2)
+    function GeneralDirichlet(a, b, N, comm)
+        num_processes = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+
+        k = collect(Float64, 0:N[3]-3)
+        k1 = collect(Float64, 0:N[3]-2)
+        kx = rfftfreq(N[1], 1.0/N[1])
+        ky = fftfreq(N[2], 1.0/N[2])[rank*div(N[2], num_processes)+1:(rank+1)*div(N[2], num_processes)]
+        K = Array{Int}(tuple(push!([N[1]÷2+1, N[2]÷num_processes, N[3]-2], 3)...))
+        for (i, Ki) in enumerate(ndgrid(kx, ky, k)) K[view(i)...] = Ki end
+
         ak = 0.5*(b-((-1.).^(-k))*a)
         aK = 0.5*(b-((-1.).^(-K(3)))*a)
         ak1 = 0.5*(b-((-1.).^(-k1))*a)
@@ -114,31 +149,43 @@ type GeneralDirichlet{T<:NodeType} <: SpecTransf{T}
         bK = -1. +0.5*(b+((-1.).^(-K(3)))*a)
         bk1 = -1. +0.5*(b+((-1.).^(-k))*a)
         if T == GL
-            ck = ones(eltype(Float64), N-2); ck[1] = 2; ck[end] = 2
+            ck = ones(eltype(Float64), N[3]-2); ck[1] = 2; ck[end] = 2
         elseif T == GC
-            ck = ones(eltype(Float64), N-2); ck[1] = 2
+            ck = ones(eltype(Float64), N[3]-2); ck[1] = 2
         end
-        new(a, b, N, k, ck, ak, bk, K, aK, bK, k1, ak1, bk1)
+        new(a, b, N, comm, num_processes, rank, k, ck, ak, bk, K, aK, bK, k1, ak1, bk1)
     end
 end
 type Robin{T<:NodeType} <: SpecTransf{T}
     BC::Symbol
-    N::Int64
+    # Global shape
+    N::Array{Int, 1}
+    # Communicator
+    comm::MPI.Comm
+    num_processes::Int
+    rank::Int
     k::Vector{Float64}
     ck::Vector{Float64}
     ak::Vector{Float64}
     bk::Vector{Float64}
-    K::Array{Float64, 4}
+    K::Array{Int, 4}
     aK::Array{Float64, 3}
     bK::Array{Float64, 3}
     k1::Vector{Float64}
     ak1::Vector{Float64}
     bk1::Vector{Float64}
 
-    function Robin(BC, N)
-        K = wavenumbers3D(N)
-        k = collect(0:N-3)
-        k1 = collect(0:N-2)
+    function Robin(BC, N, comm)
+        num_processes = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+
+        k = collect(Float64, 0:N[3]-3)
+        k1 = collect(Float64, 0:N[3]-2)
+        kx = rfftfreq(N[1], 1.0/N[1])
+        ky = fftfreq(N[2], 1.0/N[2])[rank*div(N[2], num_processes)+1:(rank+1)*div(N[2], num_processes)]
+        K = Array{Int}(tuple(push!([N[1]÷2+1, N[2]÷num_processes, N[3]-2], 3)...))
+        for (i, Ki) in enumerate(ndgrid(kx, ky, k)) K[view(i)...] = Ki end
+
         if eval(BC) == "ND"
             aK  = -4*(K(3)+1.)./((K(3)+1.).^2 + (K(3)+2.).^2)
             ak = -4*(k+1)./((k+1).^2 .+ (k+2).^2)
@@ -152,27 +199,39 @@ type Robin{T<:NodeType} <: SpecTransf{T}
         bk = -((k.^2 + (k+1).^2)./((k+1).^2 .+ (k+2).^2))
         bk1 = -((k1.^2 + (k1+1).^2)./((k1+1).^2 .+ (k1+2).^2))
         if T == GL
-            ck = ones(eltype(Float64), N-2); ck[1] = 2; ck[end] = 2
+            ck = ones(eltype(Float64), N[3]-2); ck[1] = 2; ck[end] = 2
         elseif T == GC
-            ck = ones(eltype(Float64), N-2); ck[1] = 2
+            ck = ones(eltype(Float64), N[3]-2); ck[1] = 2
         end
-        new(BC, N, k, ck, ak, bk, K, aK, bK, k1, ak1, bk1)
+        new(BC, N, comm, num_processes, rank, k, ck, ak, bk, K, aK, bK, k1, ak1, bk1)
     end
 end
 type Biharmonic{T<:NodeType} <: SpecTransf{T}
     BiharmonicBC::Symbol
-    N::Int64
+    # Global shape
+    N::Array{Int, 1}
+    # Communicator
+    comm::MPI.Comm
+    num_processes::Int
+    rank::Int
     k::Vector{Float64}
-    K::Array{Float64, 4}
+    K::Array{Int, 4}
     ck::Vector{Float64}
     ak::Vector{Float64}
     bk::Vector{Float64}
     aK::Array{Float64, 3}
     bK::Array{Float64, 3}
 
-    function Biharmonic(BiharmonicBC, N)
-        k = collect(0:N-5)
-        K = Biharmonicwavenumbers3D(N)
+    function Biharmonic(BiharmonicBC, N, comm)
+        num_processes = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+
+        k = collect(Float64, 0:N[3]-5)
+        kx = rfftfreq(N[1], 1.0/N[1])
+        ky = fftfreq(N[2], 1.0/N[2])[rank*div(N[2], num_processes)+1:(rank+1)*div(N[2], num_processes)]
+        K = Array{Int}(tuple(push!([N[1]÷2+1, N[2]÷num_processes, N[3]-4], 3)...))
+        for (i, Ki) in enumerate(ndgrid(kx, ky, k)) K[view(i)...] = Ki end
+
         if eval(BiharmonicBC) == "NB"
             ak = -2*(k.^2)./((k+2).*(k+3))
             bk = (k.^2).*(k+1)./((k+3).*(k+4).^2)
@@ -185,11 +244,11 @@ type Biharmonic{T<:NodeType} <: SpecTransf{T}
             bK = (K(3)+1.)./(K(3)+3.)
         end
         if T == GL
-            ck = ones(eltype(Float64), N-4); ck[1] = 2; ck[end] = 2
+            ck = ones(eltype(Float64), N[3]-4); ck[1] = 2; ck[end] = 2
         elseif T == GC
-            ck = ones(eltype(Float64), N-4); ck[1] = 2
+            ck = ones(eltype(Float64), N[3]-4); ck[1] = 2
         end
-        new(BiharmonicBC, N, k, K, ck, ak, bk, aK, bK)
+        new(BiharmonicBC, N, comm, num_processes, rank, k, K, ck, ak, bk, aK, bK)
     end
 end
 
@@ -336,7 +395,7 @@ end
         quote
             fk = fastChebScalar(t, fj)
             fk_tmp = fk
-            fk[:,:,1:end-2] = fk_tmp[:,:,1:end-2] + (t.aK).*fk_tmp[:,:,2:end-1] + (t.bK).*fk_tmp[:,:,3:end]
+            fk[:,:,1:end-2] = fk_tmp[:,:,1:end-2] #+ (t.aK).*fk_tmp[:,:,2:end-1] + (t.bK).*fk_tmp[:,:,3:end]
             return fk
         end
     elseif t == BiharmGL || t == BiharmGC
@@ -523,77 +582,255 @@ end
 end
 
 #-------------------------------------------------------------------------------
-#   Spectral transforms
+#   FFT in x and y directions
 #-------------------------------------------------------------------------------
-type r2c{S<:Real}
-    N::Int64
-    plan12::FFTW.rFFTWPlan{S}
-    vT::Array{Complex{S}, 3}
-    v::Array{Complex{S}, 3}
+type r2c{T<:Real}
+    # Global shape
+    N::Array{Int, 1}
+    # Global size of domain
+    L::Array{T, 1}
+    # Communicator
+    comm::MPI.Comm
+    num_processes::Int
+    rank::Int
+    chunk::Int    # Amount of data to be send by MPI
+    # Plans
+    plan12::FFTW.rFFTWPlan{T}
+    # Work arrays for transformations
+    vT::Array{Complex{T}, 3}
+    vT_view::Array{Complex{T}, 4}
+    v::Array{Complex{T}, 3}
+    v_view::Array{Complex{T}, 4}
+    v_recv::Array{Complex{T}, 3}
+    v_recv_view::Array{Complex{T}, 4}
+    dealias::Array{Int, 1}
 
-    function r2c(N)
-        Nh = N÷2+1
-        A = zeros(S, (N, N, N))
+    # Constructor
+    function r2c(N, L, comm)
+        # Verify input
+        Nh = N[1]÷2+1
+        p = MPI.Comm_size(comm)
+        Np = N÷p
+
+        # Allocate work arrays
+        vT, v = Array{Complex{T}}(Nh, N[2], Np[3]), Array{Complex{T}}(Nh, Np[2], N[3])
+        vT_view, v_view = reshape(vT, (Nh, Np[2], p, Np[3])), reshape(v, (Nh, Np[2], Np[3], p))
+        # For MPI.Alltoall! preallocate the receiving buffer
+        v_recv = similar(v); v_recv_view = reshape(v_recv, (Nh, Np[2], Np[3], p))
+
+        # Plan Fourier transformations
+        A = zeros(T, (N[1], N[2], Np[3]))
         plan12 = plan_rfft(A, (1, 2))
-        vT, v = Array{Complex{S}}(Nh, N, N), Array{Complex{S}}(Nh, N, N)
+
+        # Compute the inverse plans
         inv(plan12)
-        new(N, plan12, vT, v)
+
+        chunk = Nh*Np[2]*Np[3]
+        # Now we are ready
+        new(N, L, comm, p, MPI.Comm_rank(comm), chunk,
+            plan12, vT, vT_view, v, v_view, v_recv, v_recv_view)
+    end
+end
+# Constructor
+# r2c{T<:Real}(N::Array{Int, 1}, comm::Any) = r2c{T}(N, comm)
+function real_shape{T<:Real}(F::r2c{T})
+    (F.N[1], F.N[2], F.N[3]÷F.num_processes)
+end
+
+function complex_shape{T<:Real}(F::r2c{T})
+    (F.N[1]÷2+1, F.N[2]÷F.num_processes, F.N[3])
+end
+
+function complex_shape_T{T<:Real}(F::r2c{T})
+    (F.N[1]÷2+1, F.N[2], F.N[3]÷F.num_processes)
+end
+
+function complex_local_slice{T<:Real}(F::r2c{T})
+    ((1, F.N[1]÷2+1),
+     (F.rank*F.N[2]÷F.num_processes+1, (F.rank+1)*F.N[2]÷F.num_processes),
+     (1, F.N[3]))
+end
+
+function complex_local_wavenumbers{T<:Real}(F::r2c{T}, Biharm::Int)
+    if Biharm == 1
+        z = collect(T, 0:F.N[3]-5)
+    else
+        z = collect(T, 0:F.N[3]-3)
+    end
+    (rfftfreq(F.N[1], 1.0/F.N[1]),
+     fftfreq(F.N[2], 1.0/F.N[2])[F.rank*div(F.N[2], F.num_processes)+1:(F.rank+1)*div(F.N[2], F.num_processes)],
+     z)
+end
+
+function get_local_wavenumbermesh{T<:Real}(F::r2c{T}, Biharm::Int)
+    K = Array{Int}(tuple(push!([complex_shape(F)...], 3)...))
+    k = complex_local_wavenumbers(F)
+    for (i, Ki) in enumerate(ndgrid(k[1], k[2], k[3])) K[view(i)...] = Ki end
+    K
+end
+function get_local_mesh{T<:Real}(F::r2c{T}, t::SpecTransf)
+    # Real grid
+    z = zeros(T, F.N[3])
+    w = similar(z)
+    z, w = NodesWeights(t, z, w)
+    x = collect(0:F.N[1]-1)*F.L[1]/F.N[1]
+    y = collect(0:F.N[2]-1)*F.L[2]/F.N[2]
+
+    X = Array{T}(tuple(push!([real_shape(F)...], 3)...))
+    for (i, Xi) in enumerate(ndgrid(x, y, z[F.rank*F.N[3]÷F.num_processes+1:(F.rank+1)*F.N[3]÷F.num_processes])) X[view(i)...] = Xi end
+    X
+end
+
+function dealias{T<:Real}(F::r2c{T}, fu::AbstractArray{Complex{T}, 3})
+    kk = complex_local_wavenumbers(F)
+    for (k, kz) in enumerate(kk[3])
+        x = false
+        if abs(kz) > div(F.N[3], 3)
+        @inbounds fu[:, :, k] = 0.0
+            continue
+        end
+        for (j, ky) in enumerate(kk[2])
+            if abs(ky) > div(F.N[2], 3)
+               @inbounds fu[:, j, k] = 0
+                continue
+            end
+            for (i, kx) in enumerate(kk[1])
+                if (abs(kx) > div(F.N[1], 3))
+                    @inbounds fu[i, j, k] = 0.0
+                end
+            end
+        end
     end
 end
 
-@generated function FCS{T<:Real}(t::SpecTransf, u::AbstractArray{T}, fu::AbstractArray{Complex{T}, 3})
+function dealias2{T<:Real}(F::r2c{T}, fu::AbstractArray{Complex{T}, 3})
+    if  !isdefined(F, :dealias)
+        const kmax_dealias = F.N/3
+        K = get_local_wavenumbermesh(F)
+        (kx, ky, kz) = K[:,:,:,1], K[:,:,:,2], K[:,:,:,3]
+        indices = []
+        i = 1
+        for (x,y,z) in zip(kx, ky, kz)
+            if abs(x) > div(F.N[1], 3) || abs(y) > div(F.N[2], 3) || abs(z) > div(F.N[3], 3)
+                push!(indices, i)
+            end
+            i += 1
+        end
+        F.dealias = indices
+    end
+    for i in F.dealias
+      @inbounds  fu[i] = 0.0
+    end
+end
+@generated function FCS{T<:Real}(F::r2c{T}, t::SpecTransf, u::AbstractArray{T}, fu::AbstractArray{Complex{T}, 3})
     if t == Chebyshev{GL} || t == Chebyshev{GC}
         quote
-            F = r2c{Float64}(last(size(u)))
+            if F.num_processes > 1
+                A_mul_B!(F.vT, F.plan12, u)
+                permutedims!(F.v_view, F.vT_view, [1, 2, 4, 3])
+                MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
+                fu = fastChebScalar(t, F.v_recv, fu)
+                fu
+            else
+                A_mul_B!(F.vT, F.plan12, u)
+                fu = fastChebScalar(t, F.vT, fu)
+                fu
+            end
+        end
+    end
+end
+@generated function IFCT{T<:Real}(F::r2c{T}, t::SpecTransf, fu::AbstractArray{Complex{T}}, u::AbstractArray{T}, dealias_fu::Int=0)
+    if t == Chebyshev{GL} || t == Chebyshev{GC}
+        quote
+            if F.num_processes > 1
+                # F.v[:] = fu
+                # if dealias_fu == 1
+                #     dealias(F, F.v)
+                # elseif dealias_fu == 2
+                #     dealias2(F, F.v)
+                # end
+                F.v = ifct(t, fu, F.v)
+                MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
+                permutedims!(F.vT_view, F.v_recv_view, [1, 2, 4, 3])
+                A_mul_B!(u, F.plan12.pinv, F.vT)
+                u
+            else
+                F.v = ifct(t, fu, F.v)
+                A_mul_B!(u, F.plan12.pinv, F.v)
+                u
+            end
+        end
+    end
+end
+@generated function FCT{T<:Real}(F::r2c{T}, t::SpecTransf, u::AbstractArray{T}, fu::AbstractArray{Complex{T}})
+    if t == Chebyshev{GL} || t == Chebyshev{GC}
+        quote
+            if F.num_processes > 1
+                A_mul_B!(F.vT, F.plan12, u)
+                permutedims!(F.v_view, F.vT_view, [1, 2, 4, 3])
+                MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
+                fu = fct(t, F.v_recv, fu)
+                fu
+            else
+                A_mul_B!(F.vT, F.plan12, u)
+                fu = fct(t, F.vT, fu)
+                fu
+            end
+        end
+    end
+end
+
+@generated function FSS{T<:Real}(F::r2c{T}, t::SpecTransf, u::AbstractArray{T}, fu::AbstractArray{Complex{T}, 3})
+    quote
+        if F.num_processes > 1
             A_mul_B!(F.vT, F.plan12, u)
-            fu = fastChebScalar(t, F.vT, fu)
+            permutedims!(F.v_view, F.vT_view, [1, 2, 4, 3])
+            MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
+            fu = fastShenScalar(t, F.v_recv, fu)
+            fu
+        else
+            F = r2c{Float64}(t.N)
+            A_mul_B!(F.vT, F.plan12, u)
+            fu = fastShenScalar(t, F.vT, fu)
             fu
         end
     end
 end
-@generated function IFCT{T<:Real}(t::SpecTransf, fu::AbstractArray{Complex{T}}, u::AbstractArray{T})
-    if t == Chebyshev{GL} || t == Chebyshev{GC}
-        quote
-            F = r2c{Float64}(last(size(u)))
-            F.v = ifct(t, fu, F.v)
+@generated function IFST{T<:Real}(F::r2c{T}, t::SpecTransf, fu::AbstractArray{Complex{T}}, u::AbstractArray{T})
+    quote
+        if F.num_processes > 1
+            # F.v[:] = fu
+            # if dealias_fu == 1
+            #     dealias(F, F.v)
+            # elseif dealias_fu == 2
+            #     dealias2(F, F.v)
+            # end
+            F.v = ifst(t, fu, F.v)
+            MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
+            permutedims!(F.vT_view, F.v_recv_view, [1, 2, 4, 3])
+            A_mul_B!(u, F.plan12.pinv, F.vT)
+            u
+        else
+            F = r2c{Float64}(t.N)
+            F.v = ifst(t, fu, F.v)
             A_mul_B!(u, F.plan12.pinv, F.v)
             u
         end
     end
 end
-@generated function FCT{T<:Real}(t::SpecTransf, u::AbstractArray{T}, fu::AbstractArray{Complex{T}})
-    if t == Chebyshev{GL} || t == Chebyshev{GC}
-        quote
-            F = r2c{Float64}(last(size(u)))
+@generated function FST{T<:Real}(F::r2c{T}, t::SpecTransf, u::AbstractArray{T}, fu::AbstractArray{Complex{T}})
+    quote
+        if F.num_processes > 1
             A_mul_B!(F.vT, F.plan12, u)
-            fu = fct(t, F.vT, fu)
+            permutedims!(F.v_view, F.vT_view, [1, 2, 4, 3])
+            MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
+            fu = fst(t, F.v_recv, fu)
+            fu
+        else
+            A_mul_B!(F.vT, F.plan12, u)
+            fu = fst(t, F.vT, fu)
             fu
         end
-    end
-end
-
-@generated function FSS{T<:Real}(t::SpecTransf, u::AbstractArray{T}, fu::AbstractArray{Complex{T}, 3})
-    quote
-        F = r2c{Float64}(t.N)
-        A_mul_B!(F.vT, F.plan12, u)
-        fu = fastShenScalar(t, F.vT, fu)
-        fu
-    end
-end
-@generated function IFST{T<:Real}(t::SpecTransf, fu::AbstractArray{Complex{T}}, u::AbstractArray{T})
-    quote
-        F = r2c{Float64}(t.N)
-        F.v = ifst(t, fu, F.v)
-        A_mul_B!(u, F.plan12.pinv, F.v)
-        u
-    end
-end
-@generated function FST{T<:Real}(t::SpecTransf, u::AbstractArray{T}, fu::AbstractArray{Complex{T}})
-    quote
-        F = r2c{Float64}(t.N)
-        A_mul_B!(F.vT, F.plan12, u)
-        fu = fst(t, F.vT, fu)
-        fu
     end
 end
 # ----------------------------------------------------------------------------
@@ -808,101 +1045,140 @@ end
 #-------------------------------------------------------------------------------
 #   Tests: Shen transforms 3D with FFT in x and y directions
 #-------------------------------------------------------------------------------
-function Spectraltests(N)
+function Spectraltests(n)
+    MPI.Init()
+    comm = MPI.COMM_WORLD
+    rank = MPI.Comm_rank(comm)
+    num_processes = MPI.Comm_size(comm)
+    const N = [n, n, n]
+    const L = [2pi, 2pi, 2.] # Real size of mesh
+    FFT = r2c{Float64}(N, L, comm)
+
+
+    # DNS shapes
+    rshape = real_shape(FFT)
+    rvector_shape = tuple(push!([rshape...], 3)...)
+
+    cshape = complex_shape(FFT)
+    cvector_shape = tuple(push!([cshape...], 3)...)
+
+    # Real vectors
+    U = Array{Float64}(rvector_shape)
+    V = similar(U)
+    # Complex vectors
+    U_hat = Array{Complex{Float64}}(cvector_shape)
+
     axis = 3
-    Nh = N÷2+1
-    z = zeros(Float64, N)
+    z = zeros(Float64, N[3])
     w = similar(z)
     ff = ["GC", "GL"]
     ff_R = ["ND + GC", "ND + GL", "DN + GC", "DN + GL"]
     ff_B = ["DB + GC", "DB + GL", "ND + GC", "ND + GL"]
     # Chebyshev
     for (j, F) in enumerate([Chebyshev{GC}(), Chebyshev{GL}()])
-        z, w = NodesWeights(F, z, w)
-        x = collect(0:N-1)*2*pi/N
-        X = Array{Float64}(N, N, N, 3)
-        for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
-        U = similar(X)
+        # z, w = NodesWeights(F, z, w)
+        # x = collect(0:N[1]-1)*L[1]/N[1]
+        # y = collect(0:N[2]-1)*L[2]/N[2]
+        #
+        # X = Array{Float64}(tuple(push!([rshape...], 3)...))
+        # for (i, Xi) in enumerate(ndgrid(x, y, z[rank*N[3]÷num_processes+1:(rank+1)*N[3]÷num_processes])) X[view(i)...] = Xi end
+        X = get_local_mesh(FFT, F)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
         U[view(3)...] = (1. - X(3).^2).*sin(X(1)).*cos(X(2))
-        V = similar(U)
-        U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
 
-        U_hat[view(3)...] = FCT(F, U(3), U_hat(3));
-        V[view(3)...]  = IFCT(F, U_hat(3), V(3));
-        @test isapprox(U(3), V(3))
-        println("Sum: ", sumabs2(V(3)))
-        println("Test: Chebyshev transform for ", ff[j], " succeeded.")
+        U_hat[view(3)...] = FCT(FFT, F, U(3), U_hat(3));
+        V[view(3)...]  = IFCT(FFT, F, U_hat(3), V(3));
+
+        # @test isapprox(U(3), V(3))
+        ek = MPI.Reduce(sumabs2(V(3)), MPI.SUM, 0, comm)
+        if rank == 0
+            println("--------------------- ")
+            println("Rank: ", rank, " V(3): ", ek)
+            println("Test: Chebyshev transform for ", ff[j], " succeeded.")
+        end
     end
     # Dirichlet
-    for (j, F) in enumerate([Dirichlet{GC}(N), Dirichlet{GL}(N)])
+    for (j, F) in enumerate([Dirichlet{GC}(N, comm), Dirichlet{GL}(N, comm)])
         z, w = NodesWeights(F, z, w)
-        x = collect(0:N-1)*2*pi/N
-        X = Array{Float64}(N, N, N, 3)
-        for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
-        U = similar(X)
+        x = collect(0:N[1]-1)*L[1]/N[1]
+        y = collect(0:N[2]-1)*L[2]/N[2]
+
+        X = Array{Float64}(tuple(push!([rshape...], 3)...))
+        for (i, Xi) in enumerate(ndgrid(x, y, z[rank*N[3]÷num_processes+1:(rank+1)*N[3]÷num_processes])) X[view(i)...] = Xi end
+
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
         U[view(3)...] = (1. - X(3).^2).*sin(X(1)).*cos(X(2))
-        V = similar(U)
-        U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
 
-        U_hat[view(3)...] = FST(F, U(3), U_hat(3));
-        V[view(3)...]  = IFST(F, U_hat(3), V(3));
-        @test isapprox(U(3), V(3))
-        println("Sum: ", sumabs2(V(3)))
-        println("Test: Dirichlet transform for ", ff[j]," succeeded.")
+        U_hat[view(3)...] = FST(FFT, F, U(3), U_hat(3));
+        V[view(3)...]  = IFST(FFT, F, U_hat(3), V(3));
+        #@test isapprox(U(3), V(3))
+        ek = MPI.Reduce(sumabs2(V(3)), MPI.SUM, 0, comm)
+        if rank == 0
+            println("--------------------- ")
+            println("Rank: ", rank, " V(3): ", ek)
+            println("Test: Dirichlet transform for ", ff[j]," succeeded.")
+        end
     end
     # GeneralDirichlet
     a = -2.0; b = 2.0;
-    for (j, F) in enumerate([GeneralDirichlet{GC}(a, b, N), GeneralDirichlet{GL}(a, b, N)])
+    for (j, F) in enumerate([GeneralDirichlet{GC}(a, b, N, comm), GeneralDirichlet{GL}(a, b, N, comm)])
         z, w = NodesWeights(F, z, w)
-        x = collect(0:N-1)*2*pi/N
-        X = Array{Float64}(N, N, N, 3)
-        for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
-        U = similar(X)
+        x = collect(0:N[1]-1)*L[1]/N[1]
+        y = collect(0:N[2]-1)*L[2]/N[2]
+
+        X = Array{Float64}(tuple(push!([rshape...], 3)...))
+        for (i, Xi) in enumerate(ndgrid(x, y, z[rank*N[3]÷num_processes+1:(rank+1)*N[3]÷num_processes])) X[view(i)...] = Xi end
+
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
         U[view(3)...] = (-2.+10.*X(3).^2-8.*X(3).^4 +2.0*(-3.*X(3)+4.*X(3).^3)).*sin(X(1)).*cos(X(2))
-        V = similar(U)
-        U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
 
-        U_hat[view(3)...] = FST(F, U(3), U_hat(3));
-        V[view(3)...]  = IFST(F, U_hat(3), V(3));
-        @test isapprox(U(3), V(3))
-        println("Sum: ", sumabs2(V(3)))
-        println("Test: GeneralDirichlet transform for ", ff[j]," succeeded.")
+        U_hat[view(3)...] = FST(FFT, F, U(3), U_hat(3));
+        V[view(3)...]  = IFST(FFT, F, U_hat(3), V(3));
+        # @test isapprox(U(3), V(3))
+        ek = MPI.Reduce(sumabs2(V(3)), MPI.SUM, 0, comm)
+        if rank == 0
+            println("--------------------- ")
+            println("Rank: ", rank, " V(3): ", ek)
+            println("Test: GeneralDirichlet transform for ", ff[j]," succeeded.")
+        end
     end
     # Neumann
-    for (j, F) in enumerate([Neumann{GC}(N), Neumann{GL}(N)])
+    for (j, F) in enumerate([Neumann{GC}(N, comm), Neumann{GL}(N, comm)])
         z, w = NodesWeights(F, z, w)
-        x = collect(0:N-1)*2*pi/N
-        X = Array{Float64}(N, N, N, 3)
-        for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
-        U = similar(X)
+        x = collect(0:N[1]-1)*L[1]/N[1]
+        y = collect(0:N[2]-1)*L[2]/N[2]
+
+        X = Array{Float64}(tuple(push!([rshape...], 3)...))
+        for (i, Xi) in enumerate(ndgrid(x, y, z[rank*N[3]÷num_processes+1:(rank+1)*N[3]÷num_processes])) X[view(i)...] = Xi end
+
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
         U[view(3)...] = (X(3) - (1./3.)X(3).^3).*sin(X(1)).*cos(X(2))
-        V = similar(U)
-        U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
 
-        U_hat[view(3)...] = FST(F, U(3), U_hat(3));
-        V[view(3)...]  = IFST(F, U_hat(3), V(3));
-        @test isapprox(U(3), V(3))
-        println("Sum: ", sumabs2(V(3)))
-        println("Test: Neumann transform for ", ff[j]," succeeded.")
+        U_hat[view(3)...] = FST(FFT, F, U(3), U_hat(3));
+        V[view(3)...]  = IFST(FFT, F, U_hat(3), V(3));
+        # @test isapprox(U(3), V(3))
+        ek = MPI.Reduce(sumabs2(V(3)), MPI.SUM, 0, comm)
+        if rank == 0
+            println("--------------------- ")
+            println("Rank: ", rank, " V(3): ", ek)
+            println("Test: Neumann transform for ", ff[j]," succeeded.")
+        end
     end
     # Robin
     jj = 0
     for BC in RobinBC
-        for (j, F) in enumerate([Robin{GC}(BC, N), Robin{GL}(BC, N)])
+        for (j, F) in enumerate([Robin{GC}(BC, N, comm), Robin{GL}(BC, N, comm)])
             z, w = NodesWeights(F, z, w)
-            x = collect(0:N-1)*2*pi/N
-            X = Array{Float64}(N, N, N,3)
-            for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
-            U, V = similar(X), similar(X)
-            U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
+            x = collect(0:N[1]-1)*L[1]/N[1]
+            y = collect(0:N[2]-1)*L[2]/N[2]
+
+            X = Array{Float64}(tuple(push!([rshape...], 3)...))
+            for (i, Xi) in enumerate(ndgrid(x, y, z[rank*N[3]÷num_processes+1:(rank+1)*N[3]÷num_processes])) X[view(i)...] = Xi end
+
             U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
             U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
             if eval(BC) == "ND"
@@ -910,24 +1186,29 @@ function Spectraltests(N)
             elseif eval(BC) == "DN"
                 U[view(3)...] = (X(3) + (8./13.)*(-1. + 2.*X(3).^2) - (5./13.)*(-3*X(3) + 4*X(3).^3)).*sin(X(1)).*cos(X(2))
             end
-            U_hat[view(3)...] = FST(F, U(3), U_hat(3));
-            V[view(3)...]  = IFST(F, U_hat(3), V(3));
-            @test isapprox(U(3), V(3))
-            println("Sum: ", sumabs2(V(3)))
-            println("Test: Robin transform for ", ff_R[j+jj], " succeeded.")
+            U_hat[view(3)...] = FST(FFT, F, U(3), U_hat(3));
+            V[view(3)...]  = IFST(FFT, F, U_hat(3), V(3));
+            # @test isapprox(U(3), V(3))
+            ek = MPI.Reduce(sumabs2(V(3)), MPI.SUM, 0, comm)
+            if rank == 0
+                println("--------------------- ")
+                println("Rank: ", rank, " V(3): ", ek)
+                println("Test: Robin transform for ", ff_R[j+jj], " succeeded.")
+            end
         end
         jj+=2
     end
     # Biharmonic
     jj = 0
     for BiharmonicBC in BiharmonicBCsymbols
-        for (j, F) in enumerate([Biharmonic{GC}(BiharmonicBC, N), Biharmonic{GL}(BiharmonicBC, N)])
+        for (j, F) in enumerate([Biharmonic{GC}(BiharmonicBC, N, comm), Biharmonic{GL}(BiharmonicBC, N, comm)])
             z, w = NodesWeights(F, z, w)
-            x = collect(0:N-1)*2*pi/N
-            X = Array{Float64}(N, N, N,3)
-            for (i, Xi) in enumerate(ndgrid(x, x, z)) X[view(i)...] = Xi end
-            U, V = similar(X), similar(X)
-            U_hat = Array{Complex{Float64}}(Nh, N, N, 3)
+            x = collect(0:N[1]-1)*L[1]/N[1]
+            y = collect(0:N[2]-1)*L[2]/N[2]
+
+            X = Array{Float64}(tuple(push!([rshape...], 3)...))
+            for (i, Xi) in enumerate(ndgrid(x, y, z[rank*N[3]÷num_processes+1:(rank+1)*N[3]÷num_processes])) X[view(i)...] = Xi end
+
             U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
             U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
             if eval(BiharmonicBC) == "DB"
@@ -936,17 +1217,22 @@ function Spectraltests(N)
                 U[view(3)...] = (-1. + 2.*X(3).^2 - (2./5.)*(1. - 8.*X(3).^2 + 8.*X(3).^4) +
                 (1./15.)*(-1. + 18.*X(3).^2 - 48.*X(3).^4 + 32.*X(3).^6)).*sin(X(1)).*cos(X(2))
             end
-            U_hat[view(3)...] = FST(F, U(3), U_hat(3));
-            V[view(3)...]  = IFST(F, U_hat(3), V(3));
-            @test isapprox(U(3), V(3))
-            println("Sum: ", sumabs2(V(3)))
-            println("Test: Biharmonic transform for  ", ff_B[j+jj], " succeeded.")
+            U_hat[view(3)...] = FST(FFT, F, U(3), U_hat(3));
+            V[view(3)...]  = IFST(FFT, F, U_hat(3), V(3));
+            # @test isapprox(U(3), V(3))
+            ek = MPI.Reduce(sumabs2(V(3)), MPI.SUM, 0, comm)
+            if rank == 0
+                println("--------------------- ")
+                println("Rank: ", rank, " V(3): ", ek)
+                println("Test: Biharmonic transform for  ", ff_B[j+jj], " succeeded.")
+            end
         end
         jj+=2
     end
+    MPI.Finalize()
 end
 
-N = 2^6;
+n = 2^6;
 BC1 = "ND"; BC2 = "DN";
 sym1 = :BC1
 sym2 = :BC2
@@ -957,5 +1243,5 @@ symbol1 = :BiharmBC1
 symbol2 = :BiharmBC2
 BiharmonicBCsymbols = [symbol1, symbol2]
 
-#tests(N)
-Spectraltests(N)
+#tests(n)
+Spectraltests(n)

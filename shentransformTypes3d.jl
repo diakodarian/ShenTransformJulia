@@ -268,6 +268,7 @@ function ifct{S<:Real}(::SpecTGC, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 
     fj
 end
 function ifct{S<:Real}(::SpecTGL, fk::AbstractArray{S, 3}, fj::AbstractArray{S, 3})
+    N = last(size(fj))
     F = DctType{1}(3)
     fj = 0.5*dct(F, fk)
     for i in 1:last(size(fj))
