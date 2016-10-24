@@ -832,7 +832,7 @@ function Spectraltests(N)
         U_hat[view(3)...] = FCT(F, U(3), U_hat(3));
         V[view(3)...]  = IFCT(F, U_hat(3), V(3));
         @test isapprox(U(3), V(3))
-        println("Sum: ", sumabs2(V(3)))
+        println("Sum: ", V(3))
         println("Test: Chebyshev transform for ", ff[j], " succeeded.")
     end
     # Dirichlet
@@ -946,7 +946,7 @@ function Spectraltests(N)
     end
 end
 
-N = 2^6;
+N = 2^3;
 BC1 = "ND"; BC2 = "DN";
 sym1 = :BC1
 sym2 = :BC2
