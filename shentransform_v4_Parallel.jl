@@ -1,10 +1,11 @@
-#module shentransform
+# module shentransform_v4_Parallel
 
 include("TDMA.jl")
 include("PDMA.jl")
-using TDMA
-using PDMA
+
 import MPI
+
+# export *
 #-----------------------------------------------------
 #      Functions needed for all transforms
 #-----------------------------------------------------
@@ -622,7 +623,7 @@ type r2c{T<:Real}
 
         # Plan Fourier transformations
         A = zeros(T, (N[1], N[2], Np[3]))
-        plan12 = plan_rfft(A, (1, 2); flags=FFTW.MEASURE)
+        plan12 = plan_rfft(A, (1, 2), flags=FFTW.MEASURE)
 
         # Compute the inverse plans
         inv(plan12)
@@ -634,7 +635,8 @@ type r2c{T<:Real}
     end
 end
 # Constructor
-# r2c{T<:Real}(N::Array{Int, 1}, comm::Any) = r2c{T}(N, comm)
+r2c{T<:Real}(N::Array{Int, 1}, L::Array{T, 1}, comm::Any) = r2c{T}(N, L, comm)
+
 function real_shape{T<:Real}(F::r2c{T})
     (F.N[1], F.N[2], F.N[3]÷F.num_processes)
 end
@@ -684,13 +686,13 @@ function get_local_mesh{T<:Real}(F::r2c{T}, t::SpecTransf)
 end
 
 function dealias{T<:Real}(F::r2c{T}, fu::AbstractArray{Complex{T}, 3})
-    kk = complex_local_wavenumbers(F)
+    kk = complex_local_wavenumbers(F, 0)
     for (k, kz) in enumerate(kk[3])
         x = false
-        if abs(kz) > div(F.N[3], 3)
-        @inbounds fu[:, :, k] = 0.0
-            continue
-        end
+        # if abs(kz) > div(F.N[3], 3)
+        # @inbounds fu[:, :, k] = 0.0
+        #     continue
+        # end
         for (j, ky) in enumerate(kk[2])
             if abs(ky) > div(F.N[2], 3)
                @inbounds fu[:, j, k] = 0
@@ -774,13 +776,13 @@ end
         end
     end
 end
-@generated function IFST{T<:Real}(F::r2c{T}, t::SpecTransf, fu::AbstractArray{Complex{T}}, u::AbstractArray{T})
+@generated function IFST{T<:Real}(F::r2c{T}, t::SpecTransf, fu::AbstractArray{Complex{T}}, u::AbstractArray{T}, dealias_fu::Int=1)
     quote
         if F.num_processes > 1
-            F.v = ifst(t, fu, F.v)
-            # F.v[:] = fu
-            # if dealias_fu == 1
-            #     dealias(F, F.v)
+            F.v[:] = ifst(t, fu, F.v)
+            if dealias_fu == 1
+                dealias(F, F.v)
+            end
             MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
             permutedims!(F.vT_view, F.v_recv_view, [1, 2, 4, 3])
             A_mul_B!(u, F.plan12.pinv, F.vT)

@@ -5,6 +5,7 @@ Created on Sun 23 Oct 13:12:36 2016
 3D Poisson solver with Dirichlet and Neumann BCs.
 =#
 include("shentransform_v4_Parallel.jl")
+# using shentransform_v4_Parallel
 using Base.Test
 using Compat
 # using PyCall
@@ -192,7 +193,7 @@ function poisson3d(n)
         U[view(3)...] = (X(3) - (1./3.)X(3).^3).*sin(X(1)).*cos(X(2))
         f[view(3)...] = -2.0*(2.X(3)-(1./3.)X(3).^3).*sin(X(1)).*cos(X(2))
 
-        f_hat[view(3)...] = FSS(FFT, F, f(3), f_hat(3));
+        f_hat[view(3)...] = FSS(FFT, F, f(3), f_hat(3))
 
         for i in 1:size(f_hat,1)
             for j in 1:size(f_hat, 2)
