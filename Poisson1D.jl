@@ -4,7 +4,7 @@ Created on Fri 21 Oct 10:23:35 2016
 
 1D Poisson solver with Dirichlet and Neumann BCs.
 =#
-
+include("LinearAlgebraSolvers.jl")
 using Base.Test
 include("shentransformTypes.jl")
 # using PyCall
@@ -45,6 +45,8 @@ end
 function poisson1d(N)
 
     ff = ["GC", "GL"]
+    solver = "sparse"
+    # solver = "BackSubstitution"
     U = zeros(Float64, N)
     U_hat = zeros(Float64, N)
     V = similar(U)
@@ -58,7 +60,11 @@ function poisson1d(N)
             ((8.x.^2-4.(1-x.^2)).*(x-0.25).^2 - 16.x.*(1-x.^2).*(x-0.25)+2.((1-x.^2).^2)).*cos(pi*x)
 
         f_hat = fastShenScalar(F, f, f_hat)
-        U_hat = solveDirichlet1D(f_hat, U_hat)
+        if solver == "sparse"
+            @time U_hat = solveDirichlet1D(f_hat, U_hat)
+        elseif solver == "BackSubstitution"
+            @time U_hat[1:end-2] = BackSubstitution_1D(U_hat[1:end-2], f_hat[1:end-2])
+        end
         V = ifst(F, U_hat, V)
 
         @test isapprox(U, V)
@@ -83,6 +89,9 @@ function poisson1d(N)
         println("Solving Poisson equation with Neumann basis for ", ff[j], " nodes succeeded." )
     end
 end
+
+N = 32
+poisson1d(N)
 
 N = 60
 poisson1d(N)

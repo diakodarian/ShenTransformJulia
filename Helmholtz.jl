@@ -1,8 +1,8 @@
 #! /usr/bin/julia
 #=
-Created on Sun 23 Oct 13:12:36 2016
+Created on Thu 27 Oct 11:18:24 2016
 
-3D Poisson solver with Dirichlet and Neumann BCs.
+3D solver for Helmholtz equation with Dirichlet and Neumann BCs.
 =#
 include("shentransform_v4_Parallel.jl")
 # using shentransform_v4_Parallel
@@ -103,7 +103,7 @@ function solveNeumann1D(f_hat, U_hat, H)
     U_hat[1:end-2] = H[2:end, 1:end]\f_hat[2:end-2]
     U_hat
 end
-function poisson3d(n)
+function Helmholtz(n)
     MPI.Init()
     comm = MPI.COMM_WORLD
     rank = MPI.Comm_rank(comm)
@@ -162,7 +162,6 @@ function poisson3d(n)
                 U_hat[i,j,:,3] = solveDirichlet1D(f_hat[i,j,:,3], U_hat[i,j,:,3], H)
             end
         end
-
         V[view(3)...]  = IFST(FFT, F, U_hat(3), V(3));
         #@test isapprox(U(3), V(3))
         eu = MPI.Reduce(sumabs2(U(3)), MPI.SUM, 0, comm)
@@ -216,4 +215,4 @@ function poisson3d(n)
 end
 
 n = 60
-poisson3d(n)
+Helmholtz(n)
