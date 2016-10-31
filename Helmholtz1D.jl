@@ -70,6 +70,7 @@ function Helmholtz1d(N)
     B = zeros(Float64, N-2, N-2)
     alpha = 2.0;
 
+    # Dirichlet BC
     for (j, F) in enumerate([Dirichlet{GL}(N), Dirichlet{GL}(N)])
         x, w = NodesWeights(F, x, w)
         U = ((1.0 - x.^2).^2).*cos(pi*x).*(x-0.25).^2
@@ -105,8 +106,9 @@ function Helmholtz1d(N)
         b = zeros(Float64, N-2)
         b = Mult_Helmholtz_1D(N, ff[j]=="GL", 1, alpha, U_hat[1:end-2], b)
         @test isapprox(b, f_hat[1:end-2])
-        println("Solving Poisson equation with Dirichlet basis for ", ff[j], " nodes succeeded." )
+        println("Solving Helmholtz equation with Dirichlet basis for ", ff[j], " nodes succeeded." )
     end
+    # Neumann BC
     for (j, F) in enumerate([Neumann{GC}(N), Neumann{GL}(N)])
         x, w = NodesWeights(F, x, w)
         U = x.- (1./3.)*x.^3
@@ -138,7 +140,7 @@ function Helmholtz1d(N)
         # b = zeros(Float64, N-3)
         # b = Mult_Helmholtz_1D(N, ff[j]=="GL", 1, alpha, U_hat[2:end-2], b)
         # @test isapprox(b, f_hat[2:end-2])
-        println("Solving Poisson equation with Neumann basis for ", ff[j], " nodes succeeded." )
+        println("Solving Helmholtz equation with Neumann basis for ", ff[j], " nodes succeeded." )
     end
 end
 

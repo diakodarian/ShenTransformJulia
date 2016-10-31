@@ -51,7 +51,6 @@ function ndgrid{T}(vs::AbstractVector{T}...)
     end
     out
 end
-
 function DirichletMatrices(A, B, ck)
     N = last(size(A))
     k = collect(0:N-1)
@@ -129,7 +128,8 @@ function Helmholtz(n)
     solver = "lu"
     alphax = 2.0;
     ff = ["GC", "GL"]
-    # Dirichlet
+
+    # Dirichlet BC
     for (l, F) in enumerate([Dirichlet{GC}(N, comm), Dirichlet{GL}(N, comm)])
 
         X = get_local_mesh(FFT, F)
@@ -191,9 +191,10 @@ function Helmholtz(n)
         if rank == 0
             println(" U(3): ", eu, " V(3): ", ev)
             println(" U_hat: ", eu_hat, " b: ", eb)
-            println("Solving Poisson equation with Dirichlet basis for ", ff[l], " nodes succeeded." )
+            println("Solving Helmholtz equation with Dirichlet basis for ", ff[l], " nodes succeeded." )
         end
     end
+    # Neumann BC
     for (l, F) in enumerate([Neumann{GC}(N, comm), Neumann{GL}(N, comm)])
         X = get_local_mesh(FFT, F)
 
@@ -246,7 +247,7 @@ function Helmholtz(n)
         ev = MPI.Reduce(sumabs2(V(3)), MPI.SUM, 0, comm)
         if rank == 0
             println(" U(3): ", eu, " V(3): ", ev)
-            println("Solving Poisson equation with Neumann basis for ", ff[l], " nodes succeeded." )
+            println("Solving Helmholtz equation with Neumann basis for ", ff[l], " nodes succeeded." )
         end
     end
     MPI.Finalize()

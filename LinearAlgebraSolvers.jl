@@ -292,7 +292,6 @@ function Solve_Helmholtz_3D_n(N, neumann, fk, uk, d0, d1, d2, L)
             y[j, k, 2] = fk[j, k, 2]
         end
     end
-
     if neumann == 1
         for i in 2:M
             ke = 2*i-1
@@ -312,7 +311,6 @@ function Solve_Helmholtz_3D_n(N, neumann, fk, uk, d0, d1, d2, L)
                 uk[j, k, ke] = y[j, k, ke] / d0[j, k, 1, M]
             end
         end
-
         for i in M-1:-1:1
             ke = 2*i-1
             ko = ke+1
@@ -411,7 +409,6 @@ function Mult_Helmholtz_1D(N, GC, factor, kx, u_hat, b)
     end
     b
 end
-
 function Mult_oe_Helmholtz_1D(N, odd, GC, factor, kx, u_hat, b)
     c0 = 0
     sum_u0 = 0.0
