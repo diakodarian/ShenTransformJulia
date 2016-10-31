@@ -1,16 +1,13 @@
 #! /usr/bin/julia
 #=
-Created on Thu 27 Oct 11:18:24 2016
+Created on Sun 30 Oct 12:38:07 2016
 
 3D solver for Helmholtz equation with Dirichlet and Neumann BCs.
 =#
 include("shentransform_v4_Parallel.jl")
-# using shentransform_v4_Parallel
+include("LinearAlgebraSolvers.jl")
 using Base.Test
 using Compat
-# using PyCall
-# import IJulia
-# using PyPlot
 
 view(k::Int, N::Int=4) = [fill(Colon(), N-1)..., k]
 @compat function call{T, N}(A::Array{T, N}, k::Int)
@@ -128,6 +125,9 @@ function Helmholtz(n)
     H = zeros(Float64, N[3]-2, N[3]-2)
     A = zeros(Float64, N[3]-2, N[3]-2)
     B = zeros(Float64, N[3]-2, N[3]-2)
+    # solver = "sparse"
+    solver = "lu"
+    alphax = 2.0;
     ff = ["GC", "GL"]
     # Dirichlet
     for (l, F) in enumerate([Dirichlet{GC}(N, comm), Dirichlet{GL}(N, comm)])
@@ -151,23 +151,46 @@ function Helmholtz(n)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
         U[view(3)...] = (1. - X(3).^2).*sin(X(1)).*cos(X(2))
-        f[view(3)...] = -2.0*(2.-X(3).^2).*sin(X(1)).*cos(X(2))
+        f[view(3)...] = (4.+alphax -(2.+alphax)*X(3).^2).*sin(X(1)).*cos(X(2))
+        U_hat[view(3)...] = 0
 
         f_hat[view(3)...] = FSS(FFT, F, f(3), f_hat(3));
 
-        for i in 1:size(f_hat,1)
-            for j in 1:size(f_hat, 2)
-                alpha = K[i,1,1,1].^2 + K[1,j,1,2].^2
-                H = A - alpha*B
-                U_hat[i,j,:,3] = solveDirichlet1D(f_hat[i,j,:,3], U_hat[i,j,:,3], H)
+        if solver == "sparse"
+            for i in 1:size(f_hat,1)
+                for j in 1:size(f_hat, 2)
+                    alpha = K[i,1,1,1].^2 + K[1,j,1,2].^2 + alphax
+                    H = -A+alpha*B
+                    U_hat[i,j,:,3] = solveDirichlet1D(f_hat[i,j,:,3], U_hat[i,j,:,3], H)
+                end
             end
+        elseif solver == "lu"
+            M = div(N[3]-3,2)
+            d0 = zeros(N[1]÷2+1, N[2]÷num_processes, 2, M+1) #size(U_hat(3), 1), size(U_hat(3), 2), 2, M+1)
+            d1 = zeros(N[1]÷2+1, N[2]÷num_processes, 2, M)
+            d2 = zeros(N[1]÷2+1, N[2]÷num_processes, 2, M-1)
+            L  = zeros(N[1]÷2+1, N[2]÷num_processes, 2, M)
+
+            alpha = sqrt(K[:,:,1,1].^2 + K[:,:,1,2].^2 + alphax)
+
+            d0, d1, d2, L = LU_Helmholtz_3D(N[3], 0, ff[l]=="GL", alpha, d0, d1, d2, L)
+            U_hat[:,:,1:end-2, 3] = Solve_Helmholtz_3D_n(N[3], 0, f_hat[:,:,1:end-2, 3], U_hat[:,:,1:end-2, 3], d0, d1, d2, L)
+
+            b = zeros(eltype(U_hat), N[1]÷2+1, N[2]÷num_processes, N[3]-2)
+            b = Mult_Helmholtz_3D(N[3], ff[l]=="GL", 1, alpha.^2, U_hat[:,:,1:end-2,3], b)
         end
+
         V[view(3)...]  = IFST(FFT, F, U_hat(3), V(3));
-        #@test isapprox(U(3), V(3))
+        # @test isapprox(U(3), V(3))
+        # @test isapprox(f_hat[:,:,1:end-2,3], b)
         eu = MPI.Reduce(sumabs2(U(3)), MPI.SUM, 0, comm)
         ev = MPI.Reduce(sumabs2(V(3)), MPI.SUM, 0, comm)
+
+        eu_hat = MPI.Reduce(sumabs2(f_hat[:,:,1:end-2, 3]), MPI.SUM, 0, comm)
+        eb = MPI.Reduce(sumabs2(b), MPI.SUM, 0, comm)
         if rank == 0
             println(" U(3): ", eu, " V(3): ", ev)
+            println(" U_hat: ", eu_hat, " b: ", eb)
             println("Solving Poisson equation with Dirichlet basis for ", ff[l], " nodes succeeded." )
         end
     end
@@ -191,17 +214,32 @@ function Helmholtz(n)
         U[view(1)...] = sin(X(3)).*cos(X(1)).*cos(X(2))
         U[view(2)...] = -cos(X(3)).*sin(X(1)).*cos(X(2))
         U[view(3)...] = (X(3) - (1./3.)X(3).^3).*sin(X(1)).*cos(X(2))
-        f[view(3)...] = -2.0*(2.X(3)-(1./3.)X(3).^3).*sin(X(1)).*cos(X(2))
+        f[view(3)...] = ((4.+alphax)*X(3)-(1./3.)*(2.+alphax)*X(3).^3).*sin(X(1)).*cos(X(2))
+
+        U_hat[view(3)...] = 0
 
         f_hat[view(3)...] = FSS(FFT, F, f(3), f_hat(3))
-
-        for i in 1:size(f_hat,1)
-            for j in 1:size(f_hat, 2)
-                alpha = K[i,1,1,1].^2 + K[1,j,1,2].^2
-                H = A - alpha*B
-                U_hat[i,j,:,3] = solveNeumann1D(f_hat[i,j,:,3], U_hat[i,j,:,3], H)
+        if solver == "sparse"
+            for i in 1:size(f_hat,1)
+                for j in 1:size(f_hat, 2)
+                    alpha = K[i,1,1,1].^2 + K[1,j,1,2].^2 + alphax
+                    H = -A+alpha*B
+                    U_hat[i,j,:,3] = solveNeumann1D(f_hat[i,j,:,3], U_hat[i,j,:,3], H)
+                end
             end
+        elseif solver == "lu"
+            M = div(N[3]-4,2)
+            d0 = zeros(N[1]÷2+1, N[2]÷num_processes, 2, M+1)
+            d1 = zeros(N[1]÷2+1, N[2]÷num_processes, 2, M)
+            d2 = zeros(N[1]÷2+1, N[2]÷num_processes, 2, M-1)
+            L  = zeros(N[1]÷2+1, N[2]÷num_processes, 2, M)
+
+            alpha = sqrt(K[:,:,1,1].^2 + K[:,:,1,2].^2 + alphax)
+
+            d0, d1, d2, L = LU_Helmholtz_3D(N[3], 1, ff[l]=="GL", alpha, d0, d1, d2, L)
+            U_hat[:,:,2:end-2, 3] = Solve_Helmholtz_3D_n(N[3], 1, f_hat[:,:,2:end-2, 3], U_hat[:,:,2:end-2, 3], d0, d1, d2, L)
         end
+
         V[view(3)...]  = IFST(FFT, F, U_hat(3), V(3));
         # @test isapprox(U(3), V(3))
         eu = MPI.Reduce(sumabs2(U(3)), MPI.SUM, 0, comm)
@@ -214,5 +252,5 @@ function Helmholtz(n)
     MPI.Finalize()
 end
 
-n = 60
+n = 32
 Helmholtz(n)

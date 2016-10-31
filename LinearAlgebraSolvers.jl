@@ -1,3 +1,6 @@
+# Linear algebra solvers from:
+# https://github.com/spectralDNS/spectralDNS/blob/master/spectralDNS/shen/LUsolve.pyx
+
 function BackSubstitution_1D(u, f)
     """
     Solve Ux = f, where U is an upper diagonal Shen Poisson matrix aij
@@ -56,22 +59,31 @@ function BackSubstitution_3D_complex(u, f)
     end
     u
 end
-
-# Not implemented!!!!!
 function LU_Helmholtz_3D(N, neumann, GC, alfa, d0, d1, d2, L)
-    for ii in 1:size(d0, 3)
-        for jj in 1:size(d0, 4)
-            LU_Helmholtz_1D(N, neumann, GC, alfa[ii, jj], d0[1:end, 1:end, ii, jj],d1[1:end, 1:end, ii, jj],d2[1:end, 1:end, ii, jj],L[1:end, 1:end, ii, jj])
+    for jj in 1:size(d0, 2)
+        for ii in 1:size(d0, 1)
+            d0[ii, jj, :, :], d1[ii, jj, :, :], d2[ii, jj, :, :], L[ii, jj, :, :] = LU_Helmholtz_1D(N, neumann, GC, alfa[ii, jj], d0[ii, jj, :, :], d1[ii, jj, :, :], d2[ii, jj, :, :], L[ii, jj, :, :])
         end
     end
+    d0, d1, d2, L
 end
 function LU_Helmholtz_1D(N, neumann, GC, alfa, d0,  d1, d2, L)
     if neumann == 0
-        d0[1,:], d1[1,:], d2[1,:], L[1,:] = LU_oe_Helmholtz_1D(N, 0, GC, alfa, d0[1,:], d1[1,:], d2[1,:], L[1,:])
-        d0[2,:], d1[2,:], d2[2,:], L[2,:] = LU_oe_Helmholtz_1D(N, 1, GC, alfa, d0[2,:], d1[2,:], d2[2,:], L[2,:])
+        if ndims(d0)>2
+            d0[1,1,1,:], d1[1,1,1,:], d2[1,1,1,:], L[1,1,1,:] = LU_oe_Helmholtz_1D(N, 0, GC, alfa, d0[1,1,1,:], d1[1,1,1,:], d2[1,1,1,:], L[1,1,1,:])
+            d0[1,1,2,:], d1[1,1,2,:], d2[1,1,2,:], L[1,1,2,:] = LU_oe_Helmholtz_1D(N, 1, GC, alfa, d0[1,1,2,:], d1[1,1,2,:], d2[1,1,2,:], L[1,1,2,:])
+        else
+            d0[1,:], d1[1,:], d2[1,:], L[1,:] = LU_oe_Helmholtz_1D(N, 0, GC, alfa, d0[1,:], d1[1,:], d2[1,:], L[1,:])
+            d0[2,:], d1[2,:], d2[2,:], L[2,:] = LU_oe_Helmholtz_1D(N, 1, GC, alfa, d0[2,:], d1[2,:], d2[2,:], L[2,:])
+        end
     else
-        d0[1,:], d1[1,:], d2[1,:], L[1,:] = LU_oe_HelmholtzN_1D(N, 0, GC, alfa, d0[1,:], d1[1,:], d2[1,:], L[1,:])
-        d0[2,:], d1[2,:], d2[2,:], L[2,:] = LU_oe_HelmholtzN_1D(N, 1, GC, alfa, d0[2,:], d1[2,:], d2[2,:], L[2,:])
+        if ndims(d0)>2
+            d0[1,1,1,:], d1[1,1,1,:], d2[1,1,1,:], L[1,1,1,:] = LU_oe_HelmholtzN_1D(N, 0, GC, alfa, d0[1,1,1,:], d1[1,1,1,:], d2[1,1,1,:], L[1,1,1,:])
+            d0[1,1,2,:], d1[1,1,2,:], d2[1,1,2,:], L[1,1,2,:] = LU_oe_HelmholtzN_1D(N, 1, GC, alfa, d0[1,1,2,:], d1[1,1,2,:], d2[1,1,2,:], L[1,1,2,:])
+        else
+            d0[1,:], d1[1,:], d2[1,:], L[1,:] = LU_oe_HelmholtzN_1D(N, 0, GC, alfa, d0[1,:], d1[1,:], d2[1,:], L[1,:])
+            d0[2,:], d1[2,:], d2[2,:], L[2,:] = LU_oe_HelmholtzN_1D(N, 1, GC, alfa, d0[2,:], d1[2,:], d2[2,:], L[2,:])
+        end
     end
     d0, d1, d2, L
 end
@@ -88,11 +100,11 @@ function LU_oe_Helmholtz_1D(N, odd, GC, alfa, d0, d1, d2, L)
     bij_e[:] = pi
     if odd == 0
         bij_e[1] *= 1.5
-        if N % 2 == 1 & GC
+        if (N % 2 == 1) & GC
             bij_e[M+1] *= 1.5
         end
     else
-        if N % 2 == 0 & GC
+        if (N % 2 == 0) & GC
             bij_e[M+1] *= 1.5
         end
     end
@@ -267,4 +279,185 @@ function ForwardSolve_L(y, L, odd, fk)
         y[i] = fk[2*(i-1)+odd+1] - L[i-1]*y[i-1]
     end
     y
+end
+function Solve_Helmholtz_3D_n(N, neumann, fk, uk, d0, d1, d2, L)
+    y = zeros(eltype(uk), size(uk, 1), size(uk, 2), size(uk, 3))
+    s1 = zeros(eltype(uk), size(uk, 1), size(uk, 2))
+    s2 = zeros(eltype(uk), size(uk, 1), size(uk, 2))
+
+    M = last(size(d0))
+    for k in 1:size(uk, 2)
+        for j in 1:size(uk, 1)
+            y[j, k, 1] = fk[j, k, 1]
+            y[j, k, 2] = fk[j, k, 2]
+        end
+    end
+
+    if neumann == 1
+        for i in 2:M
+            ke = 2*i-1
+            ko = ke+1
+            for k in 1:size(uk, 2)
+                for j in 1:size(uk, 1)
+                    y[j, k, ke] = fk[j, k, ke] - L[j, k, 1, i-1]*y[j, k, ke-2]
+                    if i <= M-1
+                        y[j, k, ko] = fk[j, k, ko] - L[j, k, 2, i-1]*y[j, k, ko-2]
+                    end
+                end
+            end
+        end
+        for k in 1:size(uk, 2)
+            for j in 1:size(uk, 1)
+                ke = 2*M-1
+                uk[j, k, ke] = y[j, k, ke] / d0[j, k, 1, M]
+            end
+        end
+
+        for i in M-1:-1:1
+            ke = 2*i-1
+            ko = ke+1
+            for k in 1:size(uk, 2)
+                for j in 1:size(uk, 1)
+                    uk[j, k, ke] = y[j, k, ke] - d1[j, k, 1, i]*uk[j, k, ke+2]
+                    if i == M-1
+                        uk[j, k, ko] = y[j, k, ko]
+                    else
+                        uk[j, k, ko] = y[j, k, ko] - d1[j, k, 2, i]*uk[j, k, ko+2]
+                    end
+                    if i < M-1
+                        s1[j, k] += uk[j, k, ke+4]
+                        uk[j, k, ke] -= s1[j, k]*d2[j, k, 1, i]
+                    end
+                    if i < M-2
+                        s2[j, k] += uk[j, k, ko+4]
+                        uk[j, k, ko] -= s2[j, k]*d2[j, k, 2, i]
+                    end
+                    uk[j, k, ke] /= d0[j, k, 1, i]
+                    uk[j, k, ko] /= d0[j, k, 2, i]
+                end
+            end
+        end
+        for i in 1:N-3
+            ii = i*i
+            for k in 1:size(uk, 2)
+                for j in 1:size(uk, 1)
+                    uk[j, k, i] = uk[j, k, i] / ii
+                end
+            end
+        end
+    else
+        for i in 2:M
+            ke = 2*i-1
+            ko = ke+1
+            kem2 = ke-2
+            kom2 = ko-2
+            im1 = i-1
+            for k in 1:size(uk, 2)
+                for j in 1:size(uk, 1)
+                    y[j, k, ke] = fk[j, k, ke] - L[j, k, 1, im1]*y[j, k, kem2]
+                    y[j, k, ko] = fk[j, k, ko] - L[j, k, 2, im1]*y[j, k, kom2]
+                end
+            end
+        end
+        ke = 2*M-1
+        ko = ke+1
+        ii = M
+        for k in 1:size(uk, 2)
+            for j in 1:size(uk, 1)
+                uk[j, k, ke] = y[j, k, ke] / d0[j, k, 1, ii]
+                uk[j, k, ko] = y[j, k, ko] / d0[j, k, 2, ii]
+            end
+        end
+        for i in M-1:-1:1
+            ke = 2*i-1
+            ko = ke+1
+            kep2 = ke+2
+            kop2 = ko+2
+            kep4 = ke+4
+            kop4 = ko+4
+            for k in 1:size(uk, 2)
+                for j in 1:size(uk, 1)
+                    uk[j, k, ke] = y[j, k, ke] - d1[j, k, 1, i]*uk[j, k, kep2]
+                    uk[j, k, ko] = y[j, k, ko] - d1[j, k, 2, i]*uk[j, k, kop2]
+                    if i < M-2
+                        s1[j, k] += uk[j, k, kep4]
+                        s2[j, k] += uk[j, k, kop4]
+                        uk[j, k, ke] -= s1[j, k]*d2[j, k, 1, i]
+                        uk[j, k, ko] -= s2[j, k]*d2[j, k, 2, i]
+                    end
+                    uk[j, k, ke] /= d0[j, k, 1, i]
+                    uk[j, k, ko] /= d0[j, k, 2, i]
+                end
+            end
+        end
+    end
+    uk
+end
+function Mult_Helmholtz_3D(N, GC, factor, alfa, u_hat, b)
+    for jj in 1:size(u_hat, 2)
+        for ii in 1:size(u_hat,1)
+            b[ii,jj,:] = Mult_Helmholtz_1D(N, GC, factor,alfa[ii, jj],u_hat[ii, jj, :],b[ii, jj,:])
+        end
+    end
+    b
+end
+function Mult_Helmholtz_1D(N, GC, factor, kx, u_hat, b)
+    if ndims(b)>1
+        b[1,1,:] = Mult_oe_Helmholtz_1D(N, 0, GC, factor, kx, u_hat[1,1,:], b[1,1,:])
+        b[1,1,:] = Mult_oe_Helmholtz_1D(N, 1, GC, factor, kx, u_hat[1,1,:], b[1,1,:])
+    else
+        b = Mult_oe_Helmholtz_1D(N, 0, GC, factor, kx, u_hat, b)
+        b = Mult_oe_Helmholtz_1D(N, 1, GC, factor, kx, u_hat, b)
+    end
+    b
+end
+
+function Mult_oe_Helmholtz_1D(N, odd, GC, factor, kx, u_hat, b)
+    c0 = 0
+    sum_u0 = 0.0
+
+    if odd == 0
+        M = div(N-3,2)
+    else
+        M = div(N-4,2)
+    end
+    # Direct matvec using the fact that there are only three unique diagonals in matrix
+    bij = Array{Float64}(M+1)
+    bij[:] = pi
+
+    if odd == 0
+        bij[1] *= 1.5
+        if (N % 2 == 1) & GC
+            bij[M+1] *= 1.5
+        end
+    else
+        if (N % 2 == 0) & GC
+            bij[M+1] *= 1.5
+        end
+    end
+    d = Array{Float64}(M+1)
+    s = Array{Float64}(M)
+    g = Array{Float64}(M-1)
+    if odd == 1
+        c0 = 1
+    end
+    for i in 1:M+1
+        d[i] = 2*pi*(2*(i-1)+1+c0)*(2*(i-1)+2+c0) + kx*bij[i]
+        if i <= M
+            s[i] = 4*pi*(2*(i-1)+1+c0) - kx*pi/2
+        end
+        if i <= M-1
+            g[i] = 4*pi*(2*(i-1)+1+c0)
+        end
+    end
+    b[2*M+odd+1] += factor*(-pi/2*kx*u_hat[2*M+odd-1] + d[M+1]*u_hat[2*M+odd+1])
+    for i in M-1:-1:2
+        b[2*(i-1)+odd+1] += factor*(-pi/2*kx*u_hat[2*(i-1)+odd-1] + d[i]*u_hat[2*(i-1)+odd+1] + s[i]*u_hat[2*(i-1)+odd+2+1])
+        if i < M-1
+            sum_u0 += u_hat[2*(i-1)+odd+1+4]
+            b[2*(i-1)+odd+1] += factor*sum_u0*g[i]
+        end
+    end
+    b[odd+1] += factor*(d[1]*u_hat[odd+1] + s[1]*u_hat[odd+2+1] + (sum_u0+u_hat[odd+4+1])*g[1])
+    b
 end

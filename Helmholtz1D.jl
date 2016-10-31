@@ -101,8 +101,10 @@ function Helmholtz1d(N)
             U_hat[1:end-2] = Solve_Helmholtz_1D(N, 0, f_hat[1:end-2], U_hat[1:end-2], d0, d1, d2, L)
         end
         V = ifst(F, U_hat, V)
-
         @test isapprox(U, V)
+        b = zeros(Float64, N-2)
+        b = Mult_Helmholtz_1D(N, ff[j]=="GL", 1, alpha, U_hat[1:end-2], b)
+        @test isapprox(b, f_hat[1:end-2])
         println("Solving Poisson equation with Dirichlet basis for ", ff[j], " nodes succeeded." )
     end
     for (j, F) in enumerate([Neumann{GC}(N), Neumann{GL}(N)])
@@ -133,9 +135,12 @@ function Helmholtz1d(N)
         end
         V = ifst(F, U_hat, V)
         @test isapprox(U, V)
+        # b = zeros(Float64, N-3)
+        # b = Mult_Helmholtz_1D(N, ff[j]=="GL", 1, alpha, U_hat[2:end-2], b)
+        # @test isapprox(b, f_hat[2:end-2])
         println("Solving Poisson equation with Neumann basis for ", ff[j], " nodes succeeded." )
     end
 end
 
-N = 32
+N = 64
 Helmholtz1d(N)
