@@ -44,27 +44,27 @@ function SymmetricalPDMA_3D(d, e, f, b)
     d[n] = d[n] - lam*e[n-1]
     e[n-1] = lam
 
-    for i in 1:size(b,1)
-        for j in 1:size(b,2)
+    for j in 1:size(b,2)
+        for i in 1:size(b,1)
             b[i,j,2] = b[i,j,2] - e[1].*b[i,j,1]
         end
     end
-    for i in 1:size(b,1)
+    for k in 3:n
         for j in 1:size(b,2)
-            for k in 3:n
+            for i in 1:size(b,1)
                 b[i,j,k] = b[i,j,k] - e[k-1]*b[i,j,k-1] - f[k-2]*b[i,j,k-2]
             end
         end
     end
-    for i in 1:size(b,1)
-        for j in 1:size(b,2)
+    for j in 1:size(b,2)
+        for i in 1:size(b,1)
             b[i,j,end] = b[i,j,end]/d[end]
             b[i,j,end-1] = b[i,j,end-1]/d[end-1] - e[n-1]*b[i,j,end]
         end
     end
-    for i in 1:size(b,1)
+    for k in n-2:-1:1
         for j in 1:size(b,2)
-            for k in n-2:-1:1
+            for i in 1:size(b,1)
                 b[i,j,k] = b[i,j,k]/d[k] - e[k]*b[i,j,k+1] - f[k]*b[i,j,k+2]
             end
         end
@@ -195,21 +195,21 @@ function PDMA_Symsolve3D(d,e,f,b)
     d,e,f = PDMA_SymLU(d,e,f)
     n = length(d)
 
-    for i in 1:size(b,1)
-        for j in 1:size(b,2)
+    for j in 1:size(b,2)
+        for i in 1:size(b,1)
             b[i,j,3] -= e[1]*b[i,j,1]
             b[i,j,4] -= e[2]*b[i,j,2]
         end
     end
-    for i in 1:size(b,1)
+    for k in 5:n
         for j in 1:size(b,2)
-            for k in 5:n
+            for i in 1:size(b,1)
                 b[i,j,k] -= (e[k-2]*b[i,j,k-2] + f[k-4]*b[i,j,k-4])
             end
         end
     end
-    for i in 1:size(b,1)
-        for j in 1:size(b,2)
+    for j in 1:size(b,2)
+        for i in 1:size(b,1)
             b[i,j,n] /= d[n]
             b[i,j,n-1] /= d[n-1]
             b[i,j,n-2] /= d[n-2]
@@ -218,9 +218,9 @@ function PDMA_Symsolve3D(d,e,f,b)
             b[i,j,n-3] -= e[n-3]*b[i,j,n-1]
         end
     end
-    for i in 1:size(b,1)
+    for k in (n-4):-1:1
         for j in 1:size(b,2)
-            for k in (n-4):-1:1
+            for i in 1:size(b,1)
                 b[i,j,k] /= d[k]
                 b[i,j,k] -= (e[k]*b[i,j,k+2] + f[k]*b[i,j,k+4])
             end

@@ -71,28 +71,28 @@ function TDMA_SymSolve3D(d,a,l,x)
     d,a,l = TDMA_SymLU(d,a,l)
     n = length(d)
     y = similar(x)
-    for j in 1:size(x,1)
-        for k in 1:size(x,2)
+    for k in 1:size(x,2)
+        for j in 1:size(x,1)
             y[j, k, 1] = x[j, k, 1]
             y[j, k, 2] = x[j, k, 2]
         end
     end
     for i in 3:n
-        for j in 1:size(x,1)
-            for k in 1:size(x,2)
+        for  k in 1:size(x,2)
+            for j in 1:size(x,1)
                 y[j, k, i] = x[j, k, i] - l[i-2]*y[j, k, i-2]
             end
         end
     end
-    for j in 1:size(x,1)
-        for k in 1:size(x,2)
+    for k in 1:size(x,2)
+        for j in 1:size(x,1)
             x[j, k, n] = y[j, k, n]/d[n]
             x[j, k, n-1] = y[j, k, n-1]/d[n-1]
         end
     end
     for i in n-2:-1:1
-        for j in 1:size(x,1)
-            for k in 1:size(x,2)
+        for k in 1:size(x,2)
+            for j in 1:size(x,1)
                 x[j, k, i] = (y[j, k, i] - a[i]*x[j, k, i+2])/d[i]
             end
         end
